@@ -1,0 +1,142 @@
+@startuml
+'https://plantuml.com/class-diagram
+
+
+
+interface Cloneable
+interface CDProtocol
+interface EDProtocol
+interface Control
+EDProtocol<|..VRouterProtocol
+CDProtocol<|..VRouterProtocol
+Cloneable<|..VRouterProtocol
+Control<|..QueryGenerator
+Control<|..VRouterObserver
+VRouterProtocol ..>VRouterObserver
+VRouterProtocol ..>CacheEvictionManager
+VRouterProtocol ..>QueryGenerator
+VRouterProtocol ..> VLookupMessage
+ QueryGenerator..>VLookupMessage
+TrafficObserver ..>QueryGenerator
+
+
+CacheEvictionManager o--ActiveUpdate
+CacheEvictionManager o-- TTLCacheManager
+CacheEvictionManager o--WeightCalculator
+class QueryGenerator   {
+    public static boolean executeFlag = false
+    public static Queue<BigInteger> availableData
+    public static HashMap<BigInteger, Integer> queriedData
+    public static ArrayList<BigInteger> indexPath
+    public static ArrayList<BigInteger> indexToPath
+    public static ArrayList<BigInteger> queryPath
+    private final static String PAR_PROT
+    private final int pid
+    UniformRandomGenerator urg
+//当开始查询时记录时间戳
+  public boolean execute()
+ }
+
+
+class VLookupMessage {
+    public BigInteger dataID
+    public BigInteger from
+    //记录最初的请求方public BigInteger firstFrom
+    public int forwardHops
+    public int backwardHops
+    public boolean direction
+    //加入时间戳public static long StartTime
+    public VLookupMessage(BigInteger t, BigInteger from)
+    public VLookupMessage forward(BigInteger from)
+    public VLookupMessage backward(BigInteger from)
+}
+
+class VRouterProtocoll{
+	final String PAR_K
+	final String PAR_ALPHA
+	final String PAR_BITS
+	final String PAR_EXPECTED_ELEMENTS
+	final String FALSE_POSITIVE_PROB =
+	private static String prefix
+	private int vRouterID
+	public Queue<VLookupMessage> lookupMessages
+	public Queue<IndexMessage> indexMessages
+	public HashMap<BigInteger,Integer> dataStorage
+	public HashMap<BigInteger,Integer> handledIndex
+	public HashMap<BigInteger,Integer> handledQuery
+	private static boolean _ALREADY_INSTALLED
+	public BigInteger nodeId
+	public RoutingTable routingTable
+	public BloomFilterRoutingTable bfRoutingTable
+	public Object clone()
+	public VRouterProtocol(String prefix)
+	private void _init()
+	private Node nodeIdtoNode(BigInteger searchNodeId)
+	public void setNodeId(BigInteger tmp)
+	***//加入返回的逻辑，如果查到数据且当前节点不是最初的请求节点，返回数据
+	//当收到消息是判断是否是lookupMessages队列里的消息，并写缓存
+	***//加入查询缓存的逻辑,加入查到后根据时间戳计算延时的逻辑，并更新Observer public void handleLookupMessage(VLookupMessage msg, int protocolID)
+	***//发信息时使用传输层 public void handleIndexMessage(IndexMessage msg, int protocolID) {
+	public void storeData(BigInteger dataID, int protocolID)
+	public BigInteger[] getCloserNodes(BigInteger targetID)
+	public void sendMessage(VLookupMessage target)
+public void nextCycle(Node node, int protocolID)
+public void processEvent(Node node, int protocolID)
+}
+
+class VRouterObserver {
+	public static IncrementalStats totalSuccessHops
+	public static IncrementalStats indexHop
+	public static IncrementalStats bloomFilterCount
+	//public static long delayedTime
+	//记录和统计延时public static HashMap<BigInteger,Integer>  delayedTimeTraffic
+	public static HashMap<BigInteger,Integer> dataIndexTraffic
+	public static HashMap<BigInteger,Integer> dataQueryTraffic
+	private static final String PAR_PROT
+	private int pid;
+	private String prefix;
+	private int round
+	public VRouterObserver(String prefix)
+	public boolean execute()
+}
+class TrafficObserver implements Control {
+	public TrafficObserver(String prefix)
+	public boolean execute()
+	//计算和输出延时
+	public String calculateTraffic(HashMap<BigInteger, Integer> trafficMap)
+
+}
+
+class CacheEvictionManager  {
+    private Jedis jedis
+    private WeightCalculator weightcalculator
+    private int maxCacheSize
+    public CacheEvictionManager(String redisHost, int redisPort, int maxCacheSize, double w1, double w2, double w3)
+    public void addToCache(String key, double frequency, double distance, double activityScore,double data)
+    private void evictLeastPriorityCache()
+}
+
+class ActiveUpdate {
+     public void deleteData(String prefix)
+     private void deleteFromLocalStorage(String prefix)
+     public void updateData(String prefix, String data)
+ }
+class TTLCacheManager{
+    private Jedis jedis
+    public TTLCacheManager(String redisHost, int redisPort)
+    public void setTTL(String key, int ttlSeconds)
+    public long getTTL(String key)
+    public void delete(String key)
+    public void close()
+}
+ class WeightCalculator {
+     private double w1
+     private double w2
+     private double w3
+     public WeightCalculator(double w1, double w2, double w3)
+     public double calculatePriority(double frequency, double distance, double activityScore)
+ }
+
+
+
+@enduml

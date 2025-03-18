@@ -1,0 +1,43 @@
+plugins {
+    id 'java'
+}
+sourceCompatibility = 1.8
+group 'org.bdware'
+version '1.0'
+
+repositories {
+    maven { url 'https://maven.aliyun.com/nexus/content/groups/public' }
+    mavenCentral()
+}
+
+dependencies {
+
+    //Gson
+    implementation 'com.google.code.gson:gson:2.8.6'
+
+    // Log4j
+    implementation 'log4j:log4j:1.2.17'
+
+    // Junit
+    testImplementation 'junit:junit:4.12'
+
+    //BloomFilter
+    implementation 'com.baqend:bloom-filter:1.0.7'
+
+    //peersim
+    implementation files("lib/peersim-1.0.5.jar","lib/djep-1.0.0.jar","lib/jep-2.3.0.jar")
+
+    //redis
+    implementation 'redis.clients:jedis:4.3.1'
+
+    implementation 'org.apache.poi:poi-scratchpad:4.1.2'
+    implementation 'org.apache.poi:poi-ooxml:4.1.2'
+    implementation 'org.apache.xmlbeans:xmlbeans:3.1.0'
+    implementation 'org.apache.commons:commons-collections4:4.4'
+
+}
+
+task copyDependencies(type: Copy) {
+    from configurations.runtimeClasspath
+    into 'libs'
+}
