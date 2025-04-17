@@ -9,11 +9,12 @@ import java.util.Set;
 public class DataActivityScore {
 
     // 计算所有数据的活跃度评分
-    public static HashMap<BigInteger, double[]> calculateActivityScore(
-            HashMap<BigInteger, Integer> dataAccessCounts,  // 数据访问次数
-            HashMap<BigInteger, Set<BigInteger>> dataAccessNodes,  // 访问的独立节点
-            Map<BigInteger, int[][]> historyData,  // 历史活跃度记录（访问次数和活跃度等级）
-            HashMap<BigInteger, double[]> previousCycleMetrics){ // 上一周期的评分信息
+    public static HashMap<String, double[]> calculateActivityScore(
+            Map<String, Integer> dataAccessCounts,  // 数据访问次数
+            Map<String, Set<String>> dataAccessNodes,  // 访问的独立节点
+            Map<String, int[][]> historyData,  // 历史活跃度记录（访问次数和活跃度等级）
+            HashMap<String, double[]> previousCycleMetrics
+            ){ // 上一周期的评分信息
 
         double weightAccessCount=0.7; // 访问次数的权重
         double weightUniqueAccessNodes=0.2;// 独立访问节点的权重
@@ -22,14 +23,14 @@ public class DataActivityScore {
         double a = 0.3; // 平滑系数 (a)
 
         // 活跃度评分结果
-        HashMap<BigInteger, double[]> activityMetrics = new HashMap<>();
-        HashMap<BigInteger, Double> scoreCache = new HashMap<>();
+        HashMap<String, double[]> activityMetrics = new HashMap<>();
+        HashMap<String, Double> scoreCache = new HashMap<>();
         double maxScore = 0.0;
         double threshold2 = activityThresholds[2]; // ʘ2 作为初始活跃度判断标准
 
-        // 1️⃣ **单次遍历**：计算 `score` 并记录 `maxScore`
-        for (Map.Entry<BigInteger, Integer> entry : dataAccessCounts.entrySet()) {
-            BigInteger dataId = entry.getKey();
+        // 单次遍历：计算score并记录maxScore
+        for (Map.Entry<String, Integer> entry : dataAccessCounts.entrySet()) {
+            String dataId = entry.getKey();
             int accessCount = entry.getValue();
             int uniqueAccessNodes = dataAccessNodes.getOrDefault(dataId, new HashSet<>()).size();
 
@@ -51,9 +52,9 @@ public class DataActivityScore {
             }
         }
 
-        // 2️⃣ **二次遍历**：计算 `活跃度等级` & `是否不活跃` & `平滑评分`
-        for (Map.Entry<BigInteger, Double> entry : scoreCache.entrySet()) {
-            BigInteger dataId = entry.getKey();
+        // 二次遍历：计算 活跃度等级 是否不活跃 平滑评分
+        for (Map.Entry<String, Double> entry : scoreCache.entrySet()) {
+            String dataId = entry.getKey();
             double score = entry.getValue();
             int accessCount = dataAccessCounts.get(dataId);
             int uniqueAccessNodes = dataAccessNodes.getOrDefault(dataId, new HashSet<>()).size();
@@ -68,7 +69,7 @@ public class DataActivityScore {
                 }
             }
 
-            // 3️⃣ **判断是否“不活跃”**
+            // 判断是否“不活跃
             boolean inactive = false;
             if (score < threshold2 * maxScore) { // 低于 ʘ2 阈值，可能不活跃
                 int[] historyLevels = historyData.getOrDefault(dataId, new int[2][10])[1]; // 取历史活跃度等级
@@ -83,7 +84,7 @@ public class DataActivityScore {
                 }
             }
 
-            // 4️⃣ **计算平滑评分**
+            // 计算平滑评分
             double previousScore = 0.0;
             if (previousCycleMetrics.containsKey(dataId)) {
                 // 上一周期评分
@@ -93,7 +94,6 @@ public class DataActivityScore {
             // 计算平滑评分：`a * 上周期评分 + (1 - a) * 当前评分`
             double smoothedScore = a * previousScore + (1 - a) * score;
 
-            // 5️⃣ **存入 `double[6]` 数组**（新增平滑评分字段）
             double[] dataMetrics = new double[5];
             dataMetrics[0] = smoothedScore;  // 平滑后的评分
             dataMetrics[1] = accessCount;   // 访问次数

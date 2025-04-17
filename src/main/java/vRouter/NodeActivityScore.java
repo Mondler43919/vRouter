@@ -12,10 +12,7 @@ public class NodeActivityScore {
     private static final double WEIGHT_ENTROPY = 0.3;
 
     // 计算活跃度评分
-    public static double calculateActivityScore(Map<String, Object> dataMetrics) {
-        Integer accessCount = (Integer) dataMetrics.get("accessCount");
-        Integer uniqueAccessNodes = (Integer) dataMetrics.get("uniqueAccessNodes");
-        Map<BigInteger, Integer> dataAccessCount = (Map<BigInteger, Integer>)dataMetrics.get("dataAccessCount");
+    public static double calculateActivityScore(Integer accessCount,Integer uniqueAccessNodes,Map<String, Integer> dataAccessCount) {
         double entropy = calculateEntropy(dataAccessCount,accessCount);
 
         // 被访问次数的对数压缩
@@ -30,7 +27,7 @@ public class NodeActivityScore {
     }
 
     // 计算熵值
-    public static double calculateEntropy(Map<BigInteger, Integer> requestCounts,Integer accessCount) {
+    public static double calculateEntropy(Map<String, Integer> requestCounts,Integer accessCount) {
         double entropy = 0.0;
         for (int count : requestCounts.values()) {
             double probability = (double) count /accessCount;

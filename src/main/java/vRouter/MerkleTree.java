@@ -1,63 +1,68 @@
 package vRouter;
 
-import java.security.MessageDigest;
-import java.security.NoSuchAlgorithmException;
 import java.util.ArrayList;
 import java.util.List;
 
 public class MerkleTree {
-    private String rootHash;
+    private final List<String> leaves;
+    private final String root;
+    private final List<List<String>> treeLevels; // 存储所有层级用于生成证明路径
 
-    public MerkleTree(List<String> dataHashes) {
-        this.rootHash = buildTree(dataHashes);
+    public MerkleTree(List<String> leaves) {
+        this.leaves = new ArrayList<>(leaves);
+        this.treeLevels = new ArrayList<>();
+        this.root = buildTree(this.leaves);
     }
 
-    // 构建默克尔树
-    private String buildTree(List<String> dataHashes) {
-        if (dataHashes.isEmpty()) {
+    private String buildTree(List<String> leaves) {
+        if (leaves.isEmpty()) {
             return "";
         }
 
-        List<String> currentLevel = new ArrayList<>(dataHashes);
+        List<String> currentLevel = new ArrayList<>(leaves);
+        treeLevels.add(new ArrayList<>(currentLevel));
 
         while (currentLevel.size() > 1) {
             List<String> nextLevel = new ArrayList<>();
             for (int i = 0; i < currentLevel.size(); i += 2) {
                 String left = currentLevel.get(i);
                 String right = (i + 1 < currentLevel.size()) ? currentLevel.get(i + 1) : left;
-                String combinedHash = calculateHash(left + right);
-                nextLevel.add(combinedHash);
+                nextLevel.add(HashUtils.SHA256(left + right));
             }
+            treeLevels.add(new ArrayList<>(nextLevel));
             currentLevel = nextLevel;
         }
-
         return currentLevel.get(0);
     }
 
-    // 计算哈希值
-    private String calculateHash(String data) {
-        try {
-            MessageDigest digest = MessageDigest.getInstance("SHA-256");
-            byte[] hashBytes = digest.digest(data.getBytes());
-            return bytesToHex(hashBytes);
-        } catch (NoSuchAlgorithmException e) {
-            throw new RuntimeException("SHA-256 算法不可用", e);
-        }
-    }
-
-    // 将字节数组转换为十六进制字符串
-    private String bytesToHex(byte[] bytes) {
-        StringBuilder hexString = new StringBuilder();
-        for (byte b : bytes) {
-            String hex = Integer.toHexString(0xff & b);
-            if (hex.length() == 1) hexString.append('0');
-            hexString.append(hex);
-        }
-        return hexString.toString();
-    }
-
-    // 获取根哈希
     public String getRootHash() {
-        return rootHash;
+        return root;
+    }
+
+    public List<String> getProofPath(int leafIndex) {
+        List<String> path = new ArrayList<>();
+        int currentIndex = leafIndex;
+
+        for (int level = 0; level < treeLevels.size() - 1; level++) {
+            List<String> levelNodes = treeLevels.get(level);
+            boolean isRightNode = (currentIndex % 2) == 1;
+            int siblingIndex = isRightNode ? currentIndex - 1 : currentIndex + 1;
+
+            if (siblingIndex < levelNodes.size()) {
+                path.add(levelNodes.get(siblingIndex));
+            }
+
+            currentIndex /= 2;
+        }
+
+        return path;
+    }
+
+    public static boolean verify(String leaf, List<String> path, String root) {
+        String currentHash = leaf;
+        for (String sibling : path) {
+            currentHash = HashUtils.SHA256(currentHash + sibling);
+        }
+        return currentHash.equals(root);
     }
 }

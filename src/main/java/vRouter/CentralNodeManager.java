@@ -2,149 +2,136 @@ package vRouter;
 
 import peersim.config.Configuration;
 import peersim.core.Network;
+
 import java.math.BigInteger;
 import java.util.*;
+import java.util.stream.Collectors;
 
 public class CentralNodeManager {
-    private BigInteger currentCentralNode;
-    private MyNode newCentralNode;
-    private List<BigInteger> candidateList;
-    private MyNode currentNode; // 当前节点的引用
-    private List<String> dataHashes; // 存储所有节点的数据哈希值
-    private HashMap<BigInteger, Double> nodeScores;  // 记录节点评分
-    private HashMap<BigInteger, Object> nodeMetrics;  // 存储每个节点的评分依据
-    private HashMap<BigInteger, double[]> dataScores;  // 记录数据评分
-    private HashMap<BigInteger, Set<BigInteger>> dataAccessNodes; //数据在全网被访问的节点
-    private HashMap<BigInteger, Integer> dataAccessCounts; // 数据在全网被访问次数
-    private Integer cycle;
+    private final MyNode currentNode;
 
-    // 构造方法
+    // 每轮缓存：key = round number
+    private final Map<Long, RoundData> roundBuffer = new HashMap<>();
+
     public CentralNodeManager(MyNode currentNode) {
-        this.currentNode = currentNode; // 传入当前节点的引用
-        nodeScores = new HashMap<>();
-        dataScores = new HashMap<>();
-        dataAccessNodes = new HashMap<>();
-        dataAccessCounts = new HashMap<>();
-        candidateList = new LinkedList<>();
-        dataHashes = new ArrayList<>();
-        nodeMetrics = new HashMap<>();
-        cycle= Configuration.getInt("CYCLE");
+        this.currentNode = currentNode;
     }
 
-    // 合并全网独立访问节点 ID 并统计访问次数
-    private void mergeGlobalDataAccessNodes(HashMap<String, Object> nodeDataMetrics) {
+    // 内部类：记录某一轮的所有数据
+    private static class RoundData {
+        int received = 0;
+        final Map<String, DataAccessMessage> messages = new HashMap<>();
+    }
 
-        // 获取当前节点的数据访问记录
-        HashMap<BigInteger, Set<BigInteger>> dataAccessNode =
-                (HashMap<BigInteger, Set<BigInteger>>) nodeDataMetrics.get("dataAccessNode");
-        if (dataAccessNode == null) {
-           // System.out.println("dataAccessNode is null");
-            //System.out.println(nodeDataMetrics.keySet());
-            return;
-        }
+    // === 接收每条节点消息（包含周期号）===
+    public void processDataAccessMessage(DataAccessMessage message) {
+        long round = message.cycle; // 消息携带的轮次
+        String senderId = message.from.toString();
 
-        // 遍历当前节点的数据访问记录
-        for (Map.Entry<BigInteger, Set<BigInteger>> entry : dataAccessNode.entrySet()) {
-            BigInteger dataId = entry.getKey();
-            Set<BigInteger> accessNodes = entry.getValue();
+        // 拿到或创建该轮的 RoundData
+        roundBuffer.putIfAbsent(round, new RoundData());
+        RoundData roundData = roundBuffer.get(round);
 
-            // 如果全局记录中还没有该数据 ID，初始化一个新的 Set
-            dataAccessNodes.computeIfAbsent(dataId, k -> new HashSet<>()).addAll(accessNodes);
+        // 如果已收到该节点消息就跳过（防重）
+        if (roundData.messages.containsKey(senderId)) return;
 
-            // 更新该数据的访问次数
-            dataAccessCounts.put(dataId, dataAccessCounts.getOrDefault(dataId, 0) + accessNodes.size());
+        // 存入消息
+        roundData.messages.put(senderId, message);
+        roundData.received++;
+        // System.out.println(round + "    from:"+senderId+"   to:"+currentNode.getId());
+
+        // 如果收到全网消息，触发该轮执行
+        if (roundData.received == Network.size() - 1) { // -1 因为中心节点不发
+            executeRound(round, roundData);
         }
     }
 
-    // 向所有节点请求评分数据
-    public void getData() {
-        for (int i = 0; i < Network.size(); i++) {
-            MyNode node = (MyNode) Network.get(i);
+    // === 执行某一轮中心节点逻辑 ===
+    private void executeRound(long round, RoundData roundData) {
+        System.out.println("======= 执行第 " + round + " 轮 =======");
 
-            double score = node.getNodeScore();
-            nodeScores.put(node.nodeId, score);
+        // 初始化临时状态
+        Map<String, Double> nodeScores = new HashMap<>();
+        Map<String, Integer> globalAccessCounts = new HashMap<>();
+        Map<String, Set<String>> globalAccessNodes = new HashMap<>();
+        Map<String, NodeProof> nodeProofs = new HashMap<>();
+        Map<String, BigInteger> nodeVrfOutputs = new HashMap<>();
+        Map<String, BigInteger> nodeVrfInputs = new HashMap<>();
+        Map<String, BigInteger> candidateMap = new HashMap<>();
 
-            // 各节点数据
-            HashMap<String, Object> data = node.getDataMetrics();
-            String dataHash = node.calculateDataHash(data);
-            dataHashes.add(dataHash);
-            // 数据评分依据
-            mergeGlobalDataAccessNodes(data);
-            // 节点评分依据
-           data.remove("dataAccessNode");
-            nodeMetrics.put(node.nodeId, data);
+        // 收集所有消息数据
+        for (DataAccessMessage msg : roundData.messages.values()) {
+            String nodeId = msg.from.toString();
+            nodeScores.put(nodeId, msg.nodeScore);
+            nodeProofs.put(nodeId, new NodeProof(msg.merkleRoot, msg.recordHashes));
+            nodeVrfOutputs.put(nodeId, msg.vrfoutput.getRandomValue());
+            nodeVrfInputs.put(nodeId, msg.input);
+
+            // 合并统计信息
+            msg.dataAccessCount.forEach((key, value) ->
+                    globalAccessCounts.merge(key, value, Integer::sum));
+
+            msg.dataAccessNodes.forEach((key, valueSet) ->
+                    globalAccessNodes.computeIfAbsent(key, k -> new HashSet<>()).addAll(valueSet));
         }
-       System.out.println("节点信息: ");
-        for (BigInteger key : nodeMetrics.keySet()) { // 遍历所有键
-           System.out.println(key + ": " + nodeMetrics.get(key)); // 输出键及其对应的值
-        }
-    }
 
-    public void getNewCentralNode() {
-        List<Map.Entry<BigInteger, Double>> sortedScores = new ArrayList<>(nodeScores.entrySet());
-        sortedScores.sort((entry1, entry2) -> Double.compare(entry2.getValue(), entry1.getValue()));  // 降序排序
+        // 选举中心节点
+        List<Map.Entry<String, Double>> sortedCandidates = new ArrayList<>(nodeScores.entrySet());
+        sortedCandidates.sort((e1, e2) -> Double.compare(e2.getValue(), e1.getValue()));
 
-        // 假设前 N 个节点为候选节点
-        int N = 5;
-        for (int i = 0; i < N && i < sortedScores.size(); i++) {
-            BigInteger nodeId = sortedScores.get(i).getKey();
-            candidateList.add(nodeId);
-        }
-        Collections.shuffle(candidateList);
-        if (candidateList.isEmpty()) {
-            System.out.println("没有候选节点，无法更新中心节点。");
-            return;
-        }
-        newCentralNode = VRFElection.electNextCentralNode(candidateList);
-    }
+        Map<BigInteger, BigInteger> candidateVrfValues = new LinkedHashMap<>();
+        sortedCandidates.stream()
+                .limit(5)
+                .forEach(entry -> {
+                    String nodeId = entry.getKey();
+                    candidateVrfValues.put(new BigInteger(nodeId), nodeVrfOutputs.get(nodeId));
+                    candidateMap.put(nodeId, nodeVrfInputs.get(nodeId));
+                });
 
-    // 计算数据评分
-    public void calculateAndUploadScores() {
-        dataScores = DataActivityScore.calculateActivityScore(
-                dataAccessCounts,
-                dataAccessNodes,
+        String newCentralNodeId = VRFElection.electNextCentralNode(candidateVrfValues);
+        System.out.println("第 " + round + " 轮选出新中心节点: " + newCentralNodeId);
+
+        // 计算数据评分
+        Map<String, double[]> dataScores = DataActivityScore.calculateActivityScore(
+                globalAccessCounts, globalAccessNodes,
                 currentNode.getHistoryData(),
-                currentNode.getDataScore());
-       System.out.println("数据评分: ");
-        for (BigInteger key : dataScores.keySet()) { // 遍历所有键
-            System.out.println(key + ": " + Arrays.toString(dataScores.get(key))); // 输出键及其对应的值
-        }
+                currentNode.getDataScore()
+        );
+        System.out.println("globalAccessNodes: " + globalAccessNodes);
+        dataScores.forEach((key, values) -> {
+            System.out.println(key + " -> " + Arrays.toString(values));
+        });
+        // 打包并上传区块
+        List<String> nodeRoots = nodeProofs.values().stream()
+                .map(p -> p.merkleRoot)
+                .collect(Collectors.toList());
+        MerkleTree globalTree = new MerkleTree(nodeRoots);
+
+        BlockData blockData = new BlockData(
+                globalTree.getRootHash(),
+                newCentralNodeId,
+                candidateMap,
+                dataScores,
+                nodeScores,
+                nodeProofs.entrySet().stream()
+                        .collect(Collectors.toMap(Map.Entry::getKey, e -> e.getValue().merkleRoot))
+        );
+
+        Block block = new Block(currentNode.getBlockchain().getLastBlockHash(), blockData);
+        currentNode.getBlockchain().broadcastBlock(block);
+
+        // 最后移除本轮缓存（自动回收）
+        roundBuffer.remove(round);
     }
 
-    private void initCentralNodeManager() {
-        nodeScores.clear();
-        dataScores.clear();
-        candidateList.clear();
-        dataAccessNodes.clear();
-        dataAccessCounts.clear();
-    }
+    // 内部类用于证明结构
+    private static class NodeProof {
+        final String merkleRoot;
+        final List<String> recordHashes;
 
-    // 生成默克尔树并上传数据到区块链
-    public void generateAndUpload() {
-        // 生成默克尔树
-        MerkleTree merkleTree = new MerkleTree(dataHashes);
-        String rootHash = merkleTree.getRootHash();
-
-        // 获取当前节点的区块链
-        Blockchain blockchain = currentNode.getBlockchain();
-        Block block = blockchain.packageData(rootHash, newCentralNode.nodeId, candidateList,
-                dataScores, nodeScores, nodeMetrics);
-        blockchain.broadcastBlock(block);
-        //System.out.println("上传成功" );
-    }
-
-    // 主执行流程
-    public void execute() {
-        getData();
-        getNewCentralNode();
-        calculateAndUploadScores();
-        generateAndUpload();
-        initCentralNodeManager();
-        if (newCentralNode != null && !(newCentralNode.nodeId).equals(currentCentralNode)) {
-            long currentCycle = peersim.core.CommonState.getTime()/cycle;
-            currentNode.setAsCentralNode(false,currentCycle);
-            newCentralNode.setAsCentralNode(true,currentCycle+1);
-            System.out.println("选举出新中心节点: " + newCentralNode.getId());
+        NodeProof(String merkleRoot, List<String> recordHashes) {
+            this.merkleRoot = merkleRoot;
+            this.recordHashes = new ArrayList<>(recordHashes);
         }
     }
 }

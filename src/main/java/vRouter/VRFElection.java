@@ -1,16 +1,18 @@
 package vRouter;
 
 import java.math.BigInteger;
-import java.security.MessageDigest;
-import java.security.NoSuchAlgorithmException;
+import java.security.*;
+import java.time.Instant;
 import java.util.*;
+
 import peersim.core.Network;
 
 public class VRFElection {
 
-    private static class VRFOutput {
-        BigInteger randomValue; // 随机数
-        String proof; // 证明
+    // **VRF 计算结果类**
+    public static class VRFOutput {
+        private final BigInteger randomValue; // 伪随机数
+        private final String proof; // 证明字符串
 
         public VRFOutput(BigInteger randomValue, String proof) {
             this.randomValue = randomValue;
@@ -26,82 +28,62 @@ public class VRFElection {
         }
     }
 
-    // 模拟 VRF 计算
-    private static VRFOutput computeVRF(BigInteger privateKey, BigInteger input) {
+    // 仅使用公钥进行 VRF 计算
+    public static VRFOutput computeVRF(PublicKey publicKey, BigInteger input) {
         try {
-            // 使用 SHA-256 模拟 VRF
             MessageDigest digest = MessageDigest.getInstance("SHA-256");
-            String data = privateKey.toString() + input.toString();
-            byte[] hashBytes = digest.digest(data.getBytes());
+            byte[] keyBytes = publicKey.getEncoded(); // 获取公钥的字节数组
+            byte[] inputData = (Base64.getEncoder().encodeToString(keyBytes) + "-" + input.toString()).getBytes();
+            byte[] hashBytes = digest.digest(inputData);
 
-            // 将哈希值转换为 BigInteger
             BigInteger randomValue = new BigInteger(1, hashBytes);
-
-            // 模拟证明（实际应用中需要使用 VRF 的证明算法）
-            String proof = "proof-" + randomValue.toString();
+            String proof = Base64.getEncoder().encodeToString(hashBytes);
 
             return new VRFOutput(randomValue, proof);
         } catch (NoSuchAlgorithmException e) {
-            throw new RuntimeException("SHA-256 不可用", e);
+            throw new RuntimeException("SHA-256 计算失败", e);
         }
     }
 
-    // 验证 VRF 输出
-    private static boolean verifyVRF(BigInteger publicKey, BigInteger input, BigInteger randomValue, String proof) {
-        // 模拟验证（实际应用中需要使用 VRF 的验证算法）
-        VRFOutput expectedOutput = computeVRF(publicKey, input);
-        return expectedOutput.getRandomValue().equals(randomValue) && expectedOutput.getProof().equals(proof);
+    public static VRFOutput computeVRF(PrivateKey privateKey, BigInteger input) {
+        try {
+            MessageDigest digest = MessageDigest.getInstance("SHA-256");
+            byte[] keyBytes = privateKey.getEncoded(); // 获取公钥的字节数组
+            byte[] inputData = (Base64.getEncoder().encodeToString(keyBytes) + "-" + input.toString()).getBytes();
+            byte[] hashBytes = digest.digest(inputData);
+
+            BigInteger randomValue = new BigInteger(1, hashBytes);
+            String proof = Base64.getEncoder().encodeToString(hashBytes);
+
+            return new VRFOutput(randomValue, proof);
+        } catch (NoSuchAlgorithmException e) {
+            throw new RuntimeException("SHA-256 计算失败", e);
+        }
     }
 
-    // 选举新的中心节点
-    public static MyNode electNextCentralNode(List<BigInteger> candidateList) {
-        if (candidateList.isEmpty()) {
-            throw new IllegalArgumentException("候选节点集合不能为空");
-        }
+    // 验证VRF结果
+    public static boolean verifyVRF(PublicKey vk, BigInteger input, BigInteger randomValue, String proof) {
+        VRFOutput expectedOutput = computeVRF(vk, input);
+        return expectedOutput.getRandomValue().equals(randomValue) &&
+                expectedOutput.getProof().equals(proof);
+    }
 
-        // 模拟每个候选节点的 VRF 输出
-        Map<BigInteger, VRFOutput> vrfOutputs = new HashMap<>();
-        for (BigInteger candidate : candidateList) {
-            BigInteger privateKey = candidate; // 假设私钥是节点 ID
-            BigInteger input = candidateList.get(candidateList.size()/2); // 使用时间戳作为输入
-            VRFOutput output = computeVRF(privateKey, input);
-            vrfOutputs.put(candidate, output);
-        }
+    public static String electNextCentralNode(Map<BigInteger, BigInteger> candidateVrfValues) {
 
-        // 选择与节点 ID 最接近的 VRF 输出对应的节点
-        BigInteger selectedCandidate = null;
-        BigInteger minDifference = null; // 最小差距
-        for (Map.Entry<BigInteger, VRFOutput> entry : vrfOutputs.entrySet()) {
-            BigInteger randomValue = entry.getValue().getRandomValue();
+        BigInteger selectedNode = null;
+        BigInteger minDifference = null;
+
+        for (Map.Entry<BigInteger, BigInteger> entry : candidateVrfValues.entrySet()) {
             BigInteger nodeId = entry.getKey();
+            BigInteger vrfValue = entry.getValue();
+            BigInteger difference = nodeId.subtract(vrfValue).abs();
 
-            // 计算 nodeId 和 randomValue 之间的差值
-            BigInteger difference = randomValue.subtract(nodeId).abs(); // 绝对差值
-
-            // 更新最小差距
             if (minDifference == null || difference.compareTo(minDifference) < 0) {
                 minDifference = difference;
-                selectedCandidate = nodeId;
+                selectedNode = nodeId;
             }
         }
-
-        // 验证选举结果
-        if (selectedCandidate != null) {
-            VRFOutput selectedOutput = vrfOutputs.get(selectedCandidate);
-            boolean isValid = verifyVRF(selectedCandidate,candidateList.get(candidateList.size()/2),
-                    selectedOutput.getRandomValue(), selectedOutput.getProof());
-            if (!isValid) {
-                throw new RuntimeException("选举结果验证失败");
-            }
-        }
-
-        // 返回新的中心节点
-        for (int i = 0; i < Network.size(); i++) {
-            MyNode node = (MyNode) Network.get(i);
-            if (node.nodeId.equals(selectedCandidate)) {
-                return node;
-            }
-        }
-        throw new RuntimeException("未找到选定的中心节点");
+        return selectedNode.toString();
     }
+
 }

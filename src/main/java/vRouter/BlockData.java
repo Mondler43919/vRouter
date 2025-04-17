@@ -1,68 +1,81 @@
 package vRouter;
 
 import java.math.BigInteger;
-import java.util.HashMap;
-import java.util.List;
-import java.util.Set;
+import java.util.*;
 
 public class BlockData {
-    private String rootHash; // 默克尔树根哈希
-    private BigInteger newCentralNodeId; // 新中心节点 ID
-    private List<BigInteger> candidateList; // 候选节点集合
-    private HashMap<BigInteger, double[]> dataScores; // 数据评分
-    private HashMap<BigInteger, Double> nodeScores; // 节点评分
-    private HashMap<BigInteger, Object> nodeMetrics; // 节点评分依据
+    private final String globalMerkleRoot;      // 全局默克尔根
+    private final String centralNodeId;     // 中心节点ID
+    private final Map<String, BigInteger> candidateMap; // 候选节点集合
+    private final Map<String, double[]> dataScores; // 数据评分
+    private final Map<String, Double> nodeScores;   // 节点评分
+    private final Map<String, String> nodeProofs;   // 新增：各节点的默克尔根证明
 
-    // 构造方法
-    public BlockData(String rootHash,
-                     BigInteger newCentralNodeId,
-                     List<BigInteger> candidateList,
-                     HashMap<BigInteger, double[]> dataScores,
-                     HashMap<BigInteger, Double> nodeScores,
-                     HashMap<BigInteger, Object> nodeMetrics) {
-        this.rootHash = rootHash;
-        this.newCentralNodeId = newCentralNodeId;
-        this.candidateList = candidateList;
-        this.dataScores = dataScores;
-        this.nodeScores = nodeScores;
-        this.nodeMetrics = nodeMetrics;
+    public BlockData(String globalMerkleRoot,
+                     String centralNodeId,
+                     Map<String, BigInteger> candidateMap,
+                     Map<String, double[]> dataScores,
+                     Map<String, Double> nodeScores,
+                     Map<String, String> stringNodeProofs) {  // 接收String键的证明
+
+        this.globalMerkleRoot = globalMerkleRoot;
+        this.centralNodeId = centralNodeId;
+        this.candidateMap =new HashMap<>(candidateMap);
+
+        // 防御性拷贝
+        this.dataScores = new HashMap<>();
+        dataScores.forEach((k, v) -> this.dataScores.put(k, v.clone()));
+
+        this.nodeScores = new HashMap<>(nodeScores);
+
+        // 转换String键到BigInteger
+        this.nodeProofs = new HashMap<>(stringNodeProofs);
     }
 
-    // Getter 方法
-    public String getRootHash() {
-        return rootHash;
+    // ========== Getters ==========
+    public String getGlobalMerkleRoot() {
+        return globalMerkleRoot;
     }
 
-    public BigInteger getNewCentralNodeId() {
-        return newCentralNodeId;
+    public String getCentralNodeId() {
+        return centralNodeId;
     }
 
-    public List<BigInteger> getCandidateSet() {
-        return candidateList;
+    public Map<String,BigInteger> getCandidateSet() {
+        return candidateMap;
     }
 
-    public HashMap<BigInteger, double[]> getDataScores() {
-        return dataScores;
+    public HashMap<String, double[]> getDataScores() {
+        HashMap<String, double[]> result = new HashMap<>();
+        dataScores.forEach((k, v) -> result.put(k, v.clone()));
+        return result;
     }
 
-
-    public HashMap<BigInteger, Double> getNodeScores() {
-        return nodeScores;
+    public Map<String, Double> getNodeScores() {
+        return new HashMap<>(nodeScores);
     }
 
-    public HashMap<BigInteger, Object> getNodeMetrics() {
-        return nodeMetrics;
+    // ========== 新增方法 ==========
+    public Map<String, String> getNodeProofs() {
+        return new HashMap<>(nodeProofs);
     }
 
-    @Override
-    public String toString() {
-        return "BlockData{" +
-                "rootHash='" + rootHash + '\'' +
-                ", newCentralNodeId=" + newCentralNodeId +
-                ", candidateSet=" + candidateList +
-                ", dataScores=" + dataScores +
-                ", nodeScores=" + nodeScores +
-                ", nodeMetrics=" + nodeMetrics +
-                '}';
+    /**
+     * 获取指定节点的默克尔根（用于验证）
+     */
+    public String getNodeMerkleRoot(String nodeId) {
+        return nodeProofs.get(nodeId);
+    }
+
+    /**
+     * 验证数据是否存在于指定节点的默克尔树中
+     * @param nodeId 节点ID
+     * @param recordHash 记录哈希
+     * @param path 该记录在节点默克尔树中的路径
+     */
+    public boolean verifyNodeRecord(String nodeId, String recordHash, List<String> path) {
+        String nodeRoot = nodeProofs.get(nodeId);
+        return nodeRoot != null &&
+                MerkleTree.verify(recordHash, path, nodeRoot);
     }
 }

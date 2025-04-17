@@ -1,10 +1,8 @@
 package vRouter;
 
-import java.util.ArrayList;
-import java.util.List;
+import java.util.*;
 import java.math.BigInteger;
-import java.util.HashMap;
-import java.util.Set;
+
 import peersim.core.Network;
 
 public class Blockchain {
@@ -13,16 +11,14 @@ public class Blockchain {
 
     public Blockchain() {
         this.chain = new ArrayList<>();
-        this.chain.add(createGenesisBlock()); // 创建创世区块
     }
-
-    private Block createGenesisBlock() {
-        String genesisData = "Genesis Block";
-        String previousHash = "0";
-        long timestamp = 0;
-        return new Block(previousHash, genesisData, timestamp);
+    public void forceSetGenesisBlock(Block genesisBlock) {
+        if (chain.isEmpty()) {
+            chain.add(genesisBlock);
+        } else {
+            chain.set(0, genesisBlock); // 替换现有的创世区块
+        }
     }
-
     // 添加外部区块
     public void addBlock(Block block) {
         if (isBlockValid(block)) {
@@ -53,31 +49,16 @@ public class Blockchain {
     public Block getLastBlock() {
         return chain.get(chain.size() - 1);
     }
+    public String getLastBlockHash(){
+        return chain.get(chain.size() - 1).getBlockHash();
+    }
+    public String getCentralNodeId(){
+        return chain.get(chain.size() - 1).getData().getCentralNodeId();
+    }
 
     // 获取区块链
     public List<Block> getChain() {
         return chain;
-    }
-
-    // 打包数据并添加到区块链
-    public Block packageData(String rootHash,
-                             BigInteger newCentralNodeId,
-                             List<BigInteger> candidateList,
-                             HashMap<BigInteger, double[]> dataScores,
-                             HashMap<BigInteger, Double> nodeScores,
-                             HashMap<BigInteger, Object> nodeMetrics) {
-        // 将数据打包为一个对象
-        BlockData blockData = new BlockData(
-                rootHash,
-                newCentralNodeId,
-                candidateList,
-                dataScores,
-                nodeScores,
-                nodeMetrics
-        );
-        lastBlockHash=this.getLastBlock().getBlockHash();
-        Block newBlock = new Block(lastBlockHash, blockData);
-        return newBlock;
     }
 
     // 模拟区块广播

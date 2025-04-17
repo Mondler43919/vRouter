@@ -22,7 +22,9 @@ import peersim.transport.Transport;
 import redis.clients.jedis.Jedis;
 
 import java.math.BigInteger;
+import java.time.Instant;
 import java.util.*;
+import java.util.concurrent.atomic.AtomicLong;
 
 public class VRouterProtocol implements Cloneable, EDProtocol,CDProtocol {
 
@@ -47,10 +49,11 @@ public class VRouterProtocol implements Cloneable, EDProtocol,CDProtocol {
 	public CacheEvictionManager cacheEvictionManager;  // 缓存淘汰管理器
 	private TTLCacheManager ttlCacheManager;  // TTL 缓存管理器
 	private Integer accessCount;
-	private HashMap<BigInteger, Integer> uniqueAccessNodes;
-	private HashMap<BigInteger, Integer> dataAccessCount;
-	private HashMap<BigInteger, Set<BigInteger>> dataAccessNode;
-	private HashMap<String, Object> dataMetrics;	//评分依据
+	private HashSet<String> uniqueAccessNodes;
+	private HashMap<String, Integer> dataAccessCount;
+	private HashMap<String, Set<String>> dataAccessNode;
+	private List<AccessRecord> accessRecords = new ArrayList<>();
+	private final AtomicLong lastCycle = new AtomicLong(-1);
 	/**
 	 * allow to call the service initializer only once
 	 *
@@ -111,10 +114,9 @@ public class VRouterProtocol implements Cloneable, EDProtocol,CDProtocol {
 		cycle = Configuration.getInt("CYCLE");
 
 		accessCount=0;
-		uniqueAccessNodes=new HashMap<>();
+		uniqueAccessNodes=new HashSet<>();
 		dataAccessCount=new HashMap<>();
 		dataAccessNode=new HashMap<>();
-		dataMetrics = new HashMap<>();
 	}
 
 	/**
@@ -149,7 +151,7 @@ public class VRouterProtocol implements Cloneable, EDProtocol,CDProtocol {
 	 *            BigInteger
 	 * @return Node
 	 */
-	private Node nodeIdtoNode(BigInteger searchNodeId) {
+	public Node nodeIdtoNode(BigInteger searchNodeId) {
 		if (searchNodeId == null)  // 如果查询的节点 ID 为 null，返回 null
 			return null;
 
@@ -160,12 +162,9 @@ public class VRouterProtocol implements Cloneable, EDProtocol,CDProtocol {
 		while (inf <= sup) {  // 执行二分查找
 			m = (inf + sup) / 2;  // 计算中间索引
 			Node node = Network.get(m);
-			//	System.out.println("获取的协议类型: " + node.getProtocol(vRouterID).getClass().getName());
-			//	System.out.println("获取的协议id: " + node.getProtocol(vRouterID));
 
 			VRouterProtocol protocol = (VRouterProtocol) node.getProtocol(vRouterID);
 			BigInteger mId = protocol.nodeId;
-
 
 			if (mId.equals(searchNodeId))  // 如果找到目标节点，返回该节点
 				return Network.get(m);
@@ -183,14 +182,14 @@ public class VRouterProtocol implements Cloneable, EDProtocol,CDProtocol {
 			if (mId.equals(searchNodeId))  // 如果找到目标节点，返回该节点
 				return Network.get(i);
 		}
-
 		return null;  // 未找到目标节点，返回 null
 	}
-	private void updateDataMetrics(BigInteger sourceNodeId, BigInteger dataId) {
+	private void updateDataMetrics(String sourceNodeId, String dataId) {
+
 		// 更新总访问次数
 		accessCount+=1;
 		// 更新独立访问节点数
-		uniqueAccessNodes.put(sourceNodeId,1);
+		uniqueAccessNodes.add(sourceNodeId);
 		// 更新数据访问次数
 		dataAccessCount.put(dataId, dataAccessCount.getOrDefault(dataId, 0) + 1);
 		dataAccessNode.computeIfAbsent(dataId, k -> new HashSet<>()).add(sourceNodeId);
@@ -228,27 +227,6 @@ public class VRouterProtocol implements Cloneable, EDProtocol,CDProtocol {
 	}
 
 	@Override
-	public void nextCycle(Node node, int protocolID) {
-		MyNode myNode = (MyNode) node; // 将节点转换为 MyNode
-		this.vRouterID = protocolID;  // 更新协议ID
-		long currentCycle = peersim.core.CommonState.getTime() / cycle;
-
-		// 如果是中心节点，执行中心节点任务
-		if (myNode.getIsCentralNode(currentCycle) && QueryGenerator.executeFlag) {
-			System.out.println("VRouterProtocol nextCycle called for node: " + myNode.getId()+" isCentral: "+myNode.getIsCentralNode(currentCycle));
-			myNode.getCentralNodeManager().execute();
-		}
-	}
-	public HashMap<String, Object> getDataMetrics() {
-		HashMap<String, Object> metrics = new HashMap<>();
-		metrics.put("accessCount", accessCount);
-		metrics.put("uniqueAccessNodes", uniqueAccessNodes.size());
-		metrics.put("dataAccessCount", new HashMap<>(dataAccessCount));
-		metrics.put("dataAccessNode", new HashMap<>(dataAccessNode));
-		initDataMetrics();
-		return metrics;
-	}
-	@Override
 	public void processEvent(Node node, int protocolID, Object event) {
 		//System.out.println("当前协议ID: " + protocolID);
 		this.vRouterID = protocolID;
@@ -256,22 +234,33 @@ public class VRouterProtocol implements Cloneable, EDProtocol,CDProtocol {
 			handleLookupMessage((VLookupMessage) event, protocolID);
 		} else if (event instanceof IndexMessage) {
 			handleIndexMessage((IndexMessage) event, protocolID);
+		} else if (event instanceof DataAccessMessage) {
+			CentralNodeManager manager = ((MyNode) node).getCentralNodeManager();
+			manager.processDataAccessMessage((DataAccessMessage) event);
 		} else if (event instanceof DataResponseMessage) {
 			handleDataResponseMessage((DataResponseMessage) event);
 		}
 	}
+
 //
 //更新查询次数。
 //如果数据已经找到，则跳过消息处理。
 //如果数据本地没有，则尝试通过反向路由表进行查找。
 //如果找到数据，则停止查询。
 //如果没有找到数据，则继续将查找消息转发到更接近的数据节点。
-	//long currentCycle = peersim.core.CommonState.getTime()/cycle;
 	public void handleLookupMessage(VLookupMessage msg, int protocolID) {
-		//	System.out.println("查找消息");
+		//	打印日志，同时记录日志
 		long currentCycle = peersim.core.CommonState.getTime()/cycle;
-		ExcelLogger.logDataAccess(currentCycle, this.nodeId, msg.from, msg.dataID);
-		updateDataMetrics(msg.from,msg.dataID);
+		long timestamp = System.currentTimeMillis();
+		String input = timestamp + "|" + this.nodeId + "|" + msg.from + "|" + msg.dataID;
+		String hash = HashUtils.SHA256(input);
+
+		ExcelLogger.logDataAccess(currentCycle, timestamp,this.nodeId, msg.from, msg.dataID,hash);
+		AccessRecord record = new AccessRecord(timestamp, this.nodeId, msg.from, msg.dataID,hash);
+		accessRecords.add(record);
+
+		updateDataMetrics(msg.from.toString(),msg.dataID.shiftRight(72).toString());
+
 		if(VRouterObserver.dataQueryTraffic.get(msg.dataID) != null) {  // 如果数据查询已经有记录，更新查询次数
 			int msgs = VRouterObserver.dataQueryTraffic.get(msg.dataID);
 			msgs++;
@@ -440,7 +429,13 @@ public class VRouterProtocol implements Cloneable, EDProtocol,CDProtocol {
 		VRouterObserver.latencyStats.add(latency);
 
 	}
+	public List<AccessRecord> getAccessRecords() {
+		return new ArrayList<>(accessRecords);
+	}
 
+	public void clearAccessRecords() {
+		accessRecords.clear();
+	}
 
 
 	public void sendMessage(Node sender, Node targetNode, int protocolID, Object message) {
@@ -448,5 +443,36 @@ public class VRouterProtocol implements Cloneable, EDProtocol,CDProtocol {
 		Transport transport = (Transport) sender.getProtocol(transportPid);
 		transport.send(sender, targetNode, message, protocolID);
 	}
+	@Override
+	public void nextCycle(Node node, int protocolID) {
+		long time=CommonState.getTime();
+		long currentCycle = time / cycle;
+		if( QueryGenerator.executeFlag && lastCycle.getAndSet(currentCycle) < currentCycle){
+			MyNode myNode = (MyNode) node;
+			this.vRouterID = protocolID;
+			BigInteger centralNodeID = new BigInteger(myNode.getBlockchain().getCentralNodeId());
+			handleRegularNodeTasks(node, centralNodeID, currentCycle);
+			// System.out.println("时间 " +time+"   from:"+node.getID()+"   to:"+centralNodeID);
+		}
+	}
+	private void handleRegularNodeTasks(Node node,BigInteger centralNodeID, long currentCycle) {
 
+		BigInteger input=BigInteger.valueOf(Instant.now().toEpochMilli());
+		VRFElection.VRFOutput vrfoutput=((MyNode)node).generateVRFOutput(input);
+
+		DataAccessMessage message =new DataAccessMessage(
+				this.nodeId,
+				NodeActivityScore.calculateActivityScore(accessCount, uniqueAccessNodes.size(), dataAccessCount),
+				accessCount,
+				uniqueAccessNodes.size(),
+				new HashMap<>(dataAccessCount),
+				new HashMap<>(dataAccessNode),
+				new ArrayList<>(accessRecords),
+				input,
+				vrfoutput,
+				currentCycle
+		);
+		sendMessage(node, nodeIdtoNode(centralNodeID), vRouterID, message);
+		initDataMetrics();
+	}
 }

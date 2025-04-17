@@ -79,7 +79,8 @@ public class CacheEvictionManager {
         if (jedis.zcard(prefixKey("cachePriority")) < maxCacheSize) {
             storeInCache(prefixedKey, priority, frequency, distance, activityScore, data);
         } else {
-            Set<String> leastPriorityKeys = (Set<String>) jedis.zrange(prefixKey("cachePriority"), 0, 0);
+            List<String> leastPriorityKeysList = jedis.zrange(prefixKey("cachePriority"), 0, 0);
+            Set<String> leastPriorityKeys = new HashSet<>(leastPriorityKeysList);
             if (!leastPriorityKeys.isEmpty()) {
                 String leastPriorityKey = leastPriorityKeys.iterator().next();
                 double leastPriority = Double.parseDouble(jedis.hget(leastPriorityKey, "priority"));

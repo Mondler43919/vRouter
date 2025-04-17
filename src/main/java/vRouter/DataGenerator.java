@@ -8,8 +8,6 @@ import peersim.core.Node;
 import peersim.core.Control;
 
 import java.math.BigInteger;
-import java.util.ArrayList;
-import java.util.List;
 
 public class DataGenerator implements Control {
     private final static String PAR_PROT = "protocol";
@@ -20,7 +18,6 @@ public class DataGenerator implements Control {
     private int dataGenerateSimCycle;
     private int totalSimCycle;
     private int dataPerCycle; // 每周期生成数据量
-    private UniformRandomGenerator urg;
     private int turns = 0;
 
     public DataGenerator(String prefix) {
@@ -28,7 +25,6 @@ public class DataGenerator implements Control {
         dataGenerateSimCycle = Configuration.getInt(prefix + "." + TURNS);
         totalSimCycle = Configuration.getInt(prefix + "." + CYCLES);
         dataPerCycle = Configuration.getInt(prefix + "." + DATA_PER_CYCLE_PARAM, 100); // 默认100
-        urg = new UniformRandomGenerator(KademliaCommonConfig.BITS, CommonState.r);
     }
 
     public boolean execute() {
@@ -44,7 +40,6 @@ public class DataGenerator implements Control {
 
         if (turns >= dataGenerateSimCycle) return false;
 
-        // 生成可配置数量的数据
         for (int i = 0; i < dataPerCycle; i++) {
             Node start;
             do {
@@ -52,8 +47,31 @@ public class DataGenerator implements Control {
             } while ((start == null) || (!start.isUp()));
 
             VRouterProtocol p = (VRouterProtocol) start.getProtocol(pid);
-            BigInteger dataID = urg.generate();
-            QueryGenerator.availableDataList.add(dataID); // 添加到List
+            BigInteger nodeID = p.nodeId;
+            int totalBits = KademliaCommonConfig.BITS;
+
+            // 获取节点ID的前56位
+            String nodeBinary = String.format("%" + totalBits + "s", nodeID.toString(2)).replace(' ', '0');
+            String prefix56 = nodeBinary.substring(0, 56);
+
+            // 固定的2位
+            String fixed00 = "00";
+
+            // 剩余位数
+            int remainingBits = totalBits - 58;
+
+            // 生成剩余部分的随机二进制字符串
+            String randomSuffix = new BigInteger(remainingBits, CommonState.r).toString(2);
+            randomSuffix = String.format("%" + remainingBits + "s", randomSuffix).replace(' ', '0');
+
+            // 拼接完整的二进制字符串
+            String fullBinary = prefix56 + fixed00 + randomSuffix;
+
+            // 转换成 BigInteger 数据ID
+            BigInteger dataID = new BigInteger(fullBinary, 2);
+
+            // 存储数据
+            QueryGenerator.availableDataList.add(dataID);
             VRouterObserver.dataIndexTraffic.put(dataID, 0);
             p.storeData(dataID, pid);
         }
