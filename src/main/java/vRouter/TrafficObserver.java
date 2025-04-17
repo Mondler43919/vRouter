@@ -1,6 +1,5 @@
 package vRouter;
 
-import peersim.core.CommonState;
 import peersim.core.Control;
 import peersim.core.Network;
 import java.io.FileWriter;
