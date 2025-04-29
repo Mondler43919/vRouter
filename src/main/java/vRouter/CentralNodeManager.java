@@ -1,17 +1,27 @@
 package vRouter;
 
 import peersim.config.Configuration;
+import peersim.core.CommonState;
 import peersim.core.Network;
 
 import java.math.BigInteger;
 import java.util.*;
 import java.util.stream.Collectors;
+import java.io.BufferedWriter;
+import java.io.FileWriter;
 
 public class CentralNodeManager {
     private final MyNode currentNode;
 
     // 每轮缓存：key = round number
     private final Map<Long, RoundData> roundBuffer = new HashMap<>();
+    private final Map<String, Double> nodeScores = new HashMap<>();
+    private final Map<String, Integer> globalAccessCounts = new HashMap<>();
+    private final Map<String, Set<String>> globalAccessNodes = new HashMap<>();
+    private final Map<String, NodeProof> nodeProofs = new HashMap<>();
+    private final Map<String, BigInteger> nodeVrfOutputs = new HashMap<>();
+    private final Map<String, BigInteger> nodeVrfInputs = new HashMap<>();
+    private final Map<String, BigInteger> candidateMap = new HashMap<>();
 
     public CentralNodeManager(MyNode currentNode) {
         this.currentNode = currentNode;
@@ -25,6 +35,7 @@ public class CentralNodeManager {
 
     // === 接收每条节点消息（包含周期号）===
     public void processDataAccessMessage(DataAccessMessage message) {
+        //时间约束+收到节点消息
         long round = message.cycle; // 消息携带的轮次
         String senderId = message.from.toString();
 
@@ -38,6 +49,7 @@ public class CentralNodeManager {
         // 存入消息
         roundData.messages.put(senderId, message);
         roundData.received++;
+        VRouterObserver.totalBytesTransferred.addAndGet(message.getSize());
         // System.out.println(round + "    from:"+senderId+"   to:"+currentNode.getId());
 
         // 如果收到全网消息，触发该轮执行
@@ -50,15 +62,10 @@ public class CentralNodeManager {
     private void executeRound(long round, RoundData roundData) {
         System.out.println("======= 执行第 " + round + " 轮 =======");
 
-        // 初始化临时状态
-        Map<String, Double> nodeScores = new HashMap<>();
-        Map<String, Integer> globalAccessCounts = new HashMap<>();
-        Map<String, Set<String>> globalAccessNodes = new HashMap<>();
-        Map<String, NodeProof> nodeProofs = new HashMap<>();
-        Map<String, BigInteger> nodeVrfOutputs = new HashMap<>();
-        Map<String, BigInteger> nodeVrfInputs = new HashMap<>();
-        Map<String, BigInteger> candidateMap = new HashMap<>();
-
+        for (String prefix : QueryGenerator.dataPrefixes) {
+            globalAccessCounts.putIfAbsent(prefix, 0);
+            globalAccessNodes.putIfAbsent(prefix, new HashSet<>());
+        }
         // 收集所有消息数据
         for (DataAccessMessage msg : roundData.messages.values()) {
             String nodeId = msg.from.toString();
@@ -74,6 +81,12 @@ public class CentralNodeManager {
             msg.dataAccessNodes.forEach((key, valueSet) ->
                     globalAccessNodes.computeIfAbsent(key, k -> new HashSet<>()).addAll(valueSet));
         }
+        DataVisualizationService visualizer = DataVisualizationService.getInstance();
+        visualizer.updatePerRound(
+                round,
+                globalAccessCounts,
+                globalAccessNodes
+        );
 
         // 选举中心节点
         List<Map.Entry<String, Double>> sortedCandidates = new ArrayList<>(nodeScores.entrySet());
@@ -97,7 +110,9 @@ public class CentralNodeManager {
                 currentNode.getHistoryData(),
                 currentNode.getDataScore()
         );
-        System.out.println("globalAccessNodes: " + globalAccessNodes);
+        // globalAccessNodes.forEach((key, values) -> {
+        //     System.out.println(key + "  " + values);
+        // });
         dataScores.forEach((key, values) -> {
             System.out.println(key + " -> " + Arrays.toString(values));
         });
@@ -112,16 +127,26 @@ public class CentralNodeManager {
                 newCentralNodeId,
                 candidateMap,
                 dataScores,
-                nodeScores,
+        nodeScores,
                 nodeProofs.entrySet().stream()
                         .collect(Collectors.toMap(Map.Entry::getKey, e -> e.getValue().merkleRoot))
-        );
+                );
 
         Block block = new Block(currentNode.getBlockchain().getLastBlockHash(), blockData);
         currentNode.getBlockchain().broadcastBlock(block);
+        VRouterObserver.lastBlockCreatedTime.set(CommonState.getTime());
+
+
 
         // 最后移除本轮缓存（自动回收）
         roundBuffer.remove(round);
+        nodeScores.clear();
+        globalAccessCounts.clear();
+        globalAccessNodes.clear();
+        nodeProofs.clear();
+        nodeVrfOutputs.clear();
+        nodeVrfInputs.clear();
+        candidateMap.clear();
     }
 
     // 内部类用于证明结构

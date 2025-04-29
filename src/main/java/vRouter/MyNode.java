@@ -1,16 +1,13 @@
 package vRouter;
 
 import peersim.core.GeneralNode;
-import peersim.core.Network;
 import peersim.config.Configuration;
 
 import java.math.BigInteger;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.Map;
 import java.util.Set;
-
-import java.security.MessageDigest;
-import java.security.NoSuchAlgorithmException;
 import java.security.*;
 
 public class MyNode extends GeneralNode{
@@ -94,36 +91,66 @@ public class MyNode extends GeneralNode{
         }
         return true;
     }
+
     private void updateCachesWithBlockData(HashMap<String, double[]> blockDataScores) {
-        // 遍历网络中的所有节点
-        for (int i = 0; i < Network.size(); i++) {
-            MyNode node = (MyNode) Network.get(i);
-            // 获取节点的协议实例
-            VRouterProtocol protocol = (VRouterProtocol) node.getProtocol(Configuration.getPid("vRouter.protocol"));
-            CacheEvictionManager cacheManager = protocol.cacheEvictionManager;
+        final int TOTAL_BITS = 128;         // 数据ID总位数（128位）
+        final int PREFIX_BITS = 56;         // 前缀二进制位数
+        final int HEX_DIGITS = PREFIX_BITS / 4; // 前缀十六进制字符数（14）
 
-            // 获取该节点缓存中的所有数据ID（原始键，如 "123"）
-            Set<String> cachedKeys = cacheManager.getCachedDataKeys();
+        // 获取协议实例和缓存管理器
+        VRouterProtocol protocol = (VRouterProtocol) this.getProtocol(pid);
+        CacheEvictionManager cacheManager = protocol.cacheEvictionManager;
 
-            // 遍历缓存中的每个数据ID
-            for (String cachedKey : cachedKeys) {
-                String dataId = cachedKey;
-                // 如果该数据ID在区块的评分中存在
-                if (blockDataScores.containsKey(dataId)) {
-                    double[] metrics = blockDataScores.get(dataId);
-                    double newActivityScore = metrics[0]; // 平滑后的评分（索引0）
-                    int activeStatus = (int) metrics[4];    // 活跃状态（索引4）
+        // 遍历所有缓存项（键为BigInteger的字符串形式）
+        Set<String> cachedKeys = new HashSet<>(cacheManager.getCachedDataKeys());
+        for (String cachedKey : cachedKeys) {
+            try {
+                // 将字符串键转换为BigInteger
+                BigInteger dataId = new BigInteger(cachedKey);
+                // System.out.println(dataId);
+                // 转换为128位二进制字符串（补前导零）
+                String binaryStr = String.format("%128s", dataId.toString(2)).replace(' ', '0');
 
+                // 3. 提取前56位二进制前缀
+                String binaryPrefix = binaryStr.substring(0, PREFIX_BITS);
+
+                // 4. 转换为14字符十六进制
+                String hexPrefix = binaryToHex(binaryPrefix, HEX_DIGITS);
+                //System.out.println(hexPrefix);
+                // 5. 匹配评分数据
+                if (blockDataScores.containsKey(hexPrefix)) {
+                    double[] metrics = blockDataScores.get(hexPrefix);
+                    if (metrics == null || metrics.length < 5) continue;
+
+                    // 6. 更新缓存
+                    int activeStatus = (int) metrics[4];
                     if (activeStatus == 0) {
-                        // 删除不活跃的数据
                         cacheManager.evictByDataId(cachedKey);
+                        if(dataId==null||QueryGenerator.dataRegistry.get(dataId)==null){
+                            System.err.println("lalalalla");
+                        }
+                        // else{
+                        //     VRouterObserver.recordDataRecycle(dataId,QueryGenerator.dataRegistry.get(dataId));
+                        // }
+
                     } else {
-                        // 更新缓存中的activityScore
-                        cacheManager.updateCacheEntry(cachedKey, newActivityScore);
+                        cacheManager.updateCacheEntry(cachedKey, metrics[0]);
                     }
                 }
+            } catch (NumberFormatException e) {
+                System.err.println("无效的缓存键格式: " + cachedKey);
             }
         }
+    }
+
+    // 辅助方法：二进制字符串转十六进制（自动补零）
+    private String binaryToHex(String binaryStr, int targetHexLength) {
+        // 将二进制字符串转换为BigInteger
+        BigInteger numericValue = new BigInteger(binaryStr, 2);
+        // 转换为十六进制并补零
+        return String.format("%" + targetHexLength + "s", numericValue.toString(16))
+                .replace(' ', '0')
+                .toLowerCase();
     }
 
     private void setHistoryData(Map<String, double[]> dataScores) {

@@ -1,162 +1,133 @@
 package vRouter;
-//缓存修改
+
 import com.google.gson.Gson;
 import peersim.config.Configuration;
 import peersim.core.CommonState;
 import peersim.core.Control;
 import peersim.core.Network;
 import peersim.util.IncrementalStats;
-
 import java.math.BigInteger;
 import java.util.HashMap;
+import java.util.Map;
+import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicLong;
 
-/**
- * This class implements a simple observer of search time and hop average in finding a node in the network
- * 统计和观察网络中的搜索时间、跳数等指标。
- * @author Daniele Furlan, Maurizio Bonani
- * @version 1.0
- */
 public class VRouterObserver implements Control {
+    // 原有查找统计指标
+    public static IncrementalStats successLookupForwardHop = new IncrementalStats();
+    public static IncrementalStats successLookupBackwardHop = new IncrementalStats();
+    public static IncrementalStats totalSuccessHops = new IncrementalStats();
+    public static IncrementalStats failedBackwardLookupHop = new IncrementalStats();
+    public static IncrementalStats indexHop = new IncrementalStats();
+    public static IncrementalStats bloomFilterCount = new IncrementalStats();
+    public static IncrementalStats latencyStats = new IncrementalStats();
+    public static HashMap<BigInteger, Integer> dataIndexTraffic = new HashMap<>();
+    public static HashMap<BigInteger, Integer> dataQueryTraffic = new HashMap<>();
 
-	/**
-	 * keep statistics of the number of hops of every successed lookup message.
-	 *统计成功的向前跳数
-	 */
+    // 新增区块链指标
+    public static final AtomicLong lastBlockCreatedTime = new AtomicLong(0);
+    public static final AtomicInteger currentBlockTxCount = new AtomicInteger(0);
 
-	public static IncrementalStats successLookupForwardHop = new IncrementalStats();
+    // 新增网络性能指标
+    public static final AtomicLong totalBytesTransferred = new AtomicLong(0);
+    public static final IncrementalStats bandwidthStats = new IncrementalStats();
 
-	/**
-	 * keep statistics of the number of hops of every successed lookup message.
-	 */
-	public static IncrementalStats successLookupBackwardHop = new IncrementalStats();
-
-	/**
-	 * keep statistics of the number of hops of every lookup message.
-	 */
-//	public static IncrementalStats droppedLookupMessage = new IncrementalStats();
-
-//	public static IncrementalStats totalQuery = new IncrementalStats();
-
-	/**
-	 * keep statistic of number of hops of failed lookup message.
-	 * 统计成功的查找总跳数
-	 */
-	public static IncrementalStats totalSuccessHops = new IncrementalStats();
-
-	/**
-	 * keep statistic of number of hops of failed lookup message.
-	 */
-	public static IncrementalStats failedBackwardLookupHop = new IncrementalStats();
-
-	/**
-	 * keep statistic of number of hop of index message.
-	 *  统计索引消息的跳数
-	 */
-	public static IncrementalStats indexHop = new IncrementalStats();
-
-	/**
-	 * keep statistic of number of hop of index message.
-	 *  统计布隆过滤器的数量
-	 */
-	public static IncrementalStats bloomFilterCount = new IncrementalStats();
-	public static IncrementalStats latencyStats = new IncrementalStats();
-	public static HashMap<BigInteger,Integer> dataIndexTraffic = new HashMap<>();
-
-	public static HashMap<BigInteger,Integer> dataQueryTraffic = new HashMap<>();
-
-	/** Parameter of the protocol we want to observe */
-	private static final String PAR_PROT = "protocol";
-
-	/** Protocol id */
-	private int pid;
-
-	/** Prefix to be printed in output */
-	private String prefix;
-
-	private int round = 1;
-
-	public VRouterObserver(String prefix) {
-		this.prefix = prefix;
-		pid = Configuration.getPid(prefix + "." + PAR_PROT);
-	}
-
-	/**
-	 * print the statistical snapshot of the current situation
-	 * 
-	 * @return boolean always false
-	 */
-	public boolean execute() {
-		// get the real network size
-		int sz = Network.size();
-		for (int i = 0; i < Network.size(); i++)
-			if (!Network.get(i).isUp())
-				sz--;
-		//存储效率评估
-		String storeS = String.format("[time=%d]:[N=%d current nodes UP] [D=%f max index h] [%f avg index h] [%d total bf n] [%f avg bf perNode]",
-				CommonState.getTime(),
-				sz,
-				indexHop.getMax(),
-				indexHop.getAverage(),
-				bloomFilterCount.getN(),
-				((float) bloomFilterCount.getN() / (float) Network.size())
-		);
-
-		String storeC = String.format("%f",
-				((float) bloomFilterCount.getN() / (float) Network.size())
-		);
-
-		String indexC = String.format("%f",
-				((float) bloomFilterCount.getN() / (float) Network.size())
-		);
+    // 回收统计指标
+    public static AtomicInteger totalData = new AtomicInteger(0);               // 总数据量（可选）
+    public static AtomicInteger totalActive = new AtomicInteger(0);             // 活跃数据量
+    public static AtomicInteger recycledActive = new AtomicInteger(0);          // 活跃被回收数
+    public static AtomicInteger recycledInactive = new AtomicInteger(0);        // 不活跃被回收数
 
 
+    private static final String PAR_PROT = "protocol";
+    private int pid;
+    private String prefix;
+    private long lastStatTime = 0;
 
-//		System.err.println(storeS);
-//		System.err.println(queryS);
+    public VRouterObserver(String prefix) {
+        this.prefix = prefix;
+        pid = Configuration.getPid(prefix + "." + PAR_PROT);
+    }
 
-//		System.err.println("=============================================");
+    public boolean execute() {
+        long now = CommonState.getTime();
+        int currentCycle = (int)(now / 1000); // 假设每个周期1000ms
 
-//		if(CommonState.getTime() == 99){
-//			for (BigInteger key: QueryGenerator.queriedData.keySet()
-//			) {
-//				if(QueryGenerator.queriedData.get(key)== 0)
-//					System.err.println("missed data: " + key);
-//			}
-//			System.err.println("Debug target: " + QueryGenerator.DEBUGTARGET);
-//			System.err.println("Index Path: " + new Gson().toJson(QueryGenerator.indexPath));
-//			System.err.println("Index to Path: " + new Gson().toJson(QueryGenerator.indexToPath));
-//			System.err.println("Query Path: " + new Gson().toJson(QueryGenerator.queryPath));
-//		}
+        // 常规统计指标
+        double blockInterval = (now - lastBlockCreatedTime.get())/1000.0;
+        double tps = calculateTPS(now);
+        double throughput = calculateThroughput(now);
 
-		/*索引跳数*/
-//		String chartS = String.format("%f %f",
-//				indexHop.getMax(),
-//				indexHop.getAverage()
-//		);
+        // 最后一个周期计算回收指标
+        int totalCycles = Configuration.getInt("CYCLES");
+        if (currentCycle >= totalCycles - 1) {
+            calculateFinalRecycleMetrics();
+        }
 
-//		/*节点平均BF数量*/
-//		String chartS = String.format("%f",
-//				((float) bloomFilterCount.getN() / (float) Network.size())
-//		);
+        // 常规输出
+        String output = String.format("TPS=%.1f | Block=%.2fs | BW=%.2fkB/s",
+                tps, blockInterval, throughput);
+        System.err.println(output);
 
-		//查询效率评估
-		String queryS = String.format("%f,%f",
-				totalSuccessHops.getMax(),
-				totalSuccessHops.getAverage()
-//				successLookupForwardHop.getMax(),
-//				successLookupForwardHop.getAverage(),
-//				successLookupBackwardHop.getMax(),
-//				successLookupBackwardHop.getAverage()
-		);
+        // 重置周期统计量
+        if(now - lastStatTime >= 1000) {
+            resetPeriodicStats();
+            lastStatTime = now;
+        }
 
+        return false;
+    }
 
-		System.err.println(queryS);
-		String latencyS = String.format("Latency: max=%f ms, avg=%f ms",
-				latencyStats.getMax(),
-				latencyStats.getAverage()
-		);
+    // 在VRouterObserver类中修改calculateFinalRecycleMetrics方法
+    private void calculateFinalRecycleMetrics() {
+        int activeRecycled = recycledActive.get();
+        int activeTotal = totalActive.get();
+        int activeNotRecycled = activeTotal - activeRecycled;
+
+        int inactiveRecycled = recycledInactive.get();
+        int inactiveTotal = totalData.get() - activeTotal;
+        int inactiveNotRecycled = inactiveTotal - inactiveRecycled;
 
 
-		return false;
-	}
+        System.err.println("\n====== RECYCLE CONFUSION MATRIX ======");
+        System.err.println("+---------------------+------------+---------------+");
+        System.err.println("|                     | Recycled   | Not Recycled  |");
+        System.err.println("+---------------------+------------+---------------+");
+        System.err.printf("| LONG_TERM_ACTIVE    | %-10d | %-13d |\n", activeRecycled, activeNotRecycled);
+        System.err.println("+---------------------+------------+---------------+");
+        System.err.printf("| LONG_TERM_INACTIVE  | %-10d | %-13d |\n", inactiveRecycled, inactiveNotRecycled);
+        System.err.println("+---------------------+------------+---------------+");
+        System.err.println(QueryGenerator.dataPrefixes);
+    }
+
+
+    // public static void recordDataRecycle(BigInteger dataId, DataGenerator.DataInfo info) {
+    //     DataGenerator.DataType type=info.type;
+    //     if (type == DataGenerator.DataType.LONG_TERM_ACTIVE) {
+    //         recycledActive.incrementAndGet();
+    //     } else if (type == DataGenerator.DataType.LONG_TERM_INACTIVE) {
+    //         recycledInactive.incrementAndGet();
+    //     }
+    //     System.err.println("prefix:"+info.prefix+"  dataId:"+dataId+"   type:"+type);
+    // }
+
+
+    private double calculateTPS(long currentTime) {
+        return currentBlockTxCount.get() /
+                ((currentTime - lastStatTime)/1000.0 + 0.001); // 避免除零
+    }
+
+    private double calculateThroughput(long currentTime) {
+        long bytes = totalBytesTransferred.get();
+        double seconds = (currentTime - lastStatTime)/1000.0;
+        return (bytes/(1024.0)) / (seconds + 0.001);
+    }
+    private void resetPeriodicStats() {
+        currentBlockTxCount.set(0);
+        totalBytesTransferred.set(0);
+        bandwidthStats.reset();
+    }
+
 }

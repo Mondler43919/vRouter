@@ -45,9 +45,9 @@ public class ExcelLogger {
             // 写入数据
             row.createCell(0).setCellValue(cycle);
             row.createCell(1).setCellValue(timestamp);
-            row.createCell(2).setCellValue(msg_to.toString());
-            row.createCell(3).setCellValue(msg_from.toString());
-            row.createCell(4).setCellValue(dataId.toString());
+            row.createCell(2).setCellValue(msg_to.toString(16));
+            row.createCell(3).setCellValue(msg_from.toString(16));
+            row.createCell(4).setCellValue(dataId.toString(16));
             row.createCell(5).setCellValue(hash);
 
             // 写回文件

@@ -1,18 +1,20 @@
 plugins {
     id 'java'
 }
+
 sourceCompatibility = 1.8
+
 group 'org.bdware'
 version '1.0'
 
 repositories {
     maven { url 'https://maven.aliyun.com/nexus/content/groups/public' }
     mavenCentral()
+    maven { url "https://maven.jzy3d.org/releases" }
 }
 
 dependencies {
-
-    //Gson
+    // Gson
     implementation 'com.google.code.gson:gson:2.8.6'
 
     // Log4j
@@ -21,20 +23,26 @@ dependencies {
     // Junit
     testImplementation 'junit:junit:4.12'
 
-    //BloomFilter
+    // BloomFilter
     implementation 'com.baqend:bloom-filter:1.0.7'
 
-    //peersim
-    implementation files("lib/peersim-1.0.5.jar","lib/djep-1.0.0.jar","lib/jep-2.3.0.jar")
+    // Peersim
+    implementation files("lib/peersim-1.0.5.jar", "lib/djep-1.0.0.jar", "lib/jep-2.3.0.jar")
 
-    //redis
+    // Redis
     implementation 'redis.clients:jedis:4.3.1'
 
+    // Apache POI
     implementation 'org.apache.poi:poi-scratchpad:4.1.2'
     implementation 'org.apache.poi:poi-ooxml:4.1.2'
     implementation 'org.apache.xmlbeans:xmlbeans:3.1.0'
     implementation 'org.apache.commons:commons-collections4:4.4'
 
+    // === 添加 XChart 依赖 ===
+    implementation 'org.knowm.xchart:xchart:3.8.1'
+
+    // === 添加 Jzy3D 依赖（3D 可视化） ===
+    implementation 'org.jzy3d:jzy3d-api:1.0.2'
 }
 
 task copyDependencies(type: Copy) {

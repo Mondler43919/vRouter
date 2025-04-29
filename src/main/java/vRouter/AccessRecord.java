@@ -18,11 +18,6 @@ public class AccessRecord {
         this.dataId = dataId;
         this.hash = hash;
     }
-    // 生成记录的唯一字符串表示
-    public String toHashString() {
-        return timestamp + "|" + nodeId + "|" + from + "|" + dataId;
-    }
-
     // Getters
     public String getHash() { return hash; }
     public long getTimestamp() { return timestamp; }

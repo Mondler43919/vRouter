@@ -54,6 +54,7 @@ public class VRouterProtocol implements Cloneable, EDProtocol,CDProtocol {
 	private HashMap<String, Set<String>> dataAccessNode;
 	private List<AccessRecord> accessRecords = new ArrayList<>();
 	private final AtomicLong lastCycle = new AtomicLong(-1);
+
 	/**
 	 * allow to call the service initializer only once
 	 *
@@ -66,7 +67,7 @@ public class VRouterProtocol implements Cloneable, EDProtocol,CDProtocol {
 	 *
 	 * 当前节点的 ID
 	 */
-	private Integer cycle;
+	private final Integer cycle = Configuration.getInt("CYCLE");;
 	public BigInteger nodeId;  // 当前节点的ID
 
 	/**
@@ -111,7 +112,6 @@ public class VRouterProtocol implements Cloneable, EDProtocol,CDProtocol {
 		indexMessages = new LinkedList<>();  //
 		this.cacheEvictionManager = null;
 		this.ttlCacheManager = null;
-		cycle = Configuration.getInt("CYCLE");
 
 		accessCount=0;
 		uniqueAccessNodes=new HashSet<>();
@@ -242,7 +242,7 @@ public class VRouterProtocol implements Cloneable, EDProtocol,CDProtocol {
 		}
 	}
 
-//
+	//
 //更新查询次数。
 //如果数据已经找到，则跳过消息处理。
 //如果数据本地没有，则尝试通过反向路由表进行查找。
@@ -252,14 +252,16 @@ public class VRouterProtocol implements Cloneable, EDProtocol,CDProtocol {
 		//	打印日志，同时记录日志
 		long currentCycle = peersim.core.CommonState.getTime()/cycle;
 		long timestamp = System.currentTimeMillis();
-		String input = timestamp + "|" + this.nodeId + "|" + msg.from + "|" + msg.dataID;
+		String input = timestamp + "|" + this.nodeId.toString(16) + "|" + msg.from.toString(16) + "|" + msg.dataID.toString(16);
 		String hash = HashUtils.SHA256(input);
 
-		ExcelLogger.logDataAccess(currentCycle, timestamp,this.nodeId, msg.from, msg.dataID,hash);
+		//	ExcelLogger.logDataAccess(currentCycle, timestamp,this.nodeId, msg.from, msg.dataID,hash);
 		AccessRecord record = new AccessRecord(timestamp, this.nodeId, msg.from, msg.dataID,hash);
 		accessRecords.add(record);
 
-		updateDataMetrics(msg.from.toString(),msg.dataID.shiftRight(72).toString());
+		updateDataMetrics(msg.from.toString(16),msg.dataID.shiftRight(72).toString(16));
+
+		// VRouterObserver.currentBlockTxCount.incrementAndGet();
 
 		if(VRouterObserver.dataQueryTraffic.get(msg.dataID) != null) {  // 如果数据查询已经有记录，更新查询次数
 			int msgs = VRouterObserver.dataQueryTraffic.get(msg.dataID);
@@ -271,7 +273,6 @@ public class VRouterProtocol implements Cloneable, EDProtocol,CDProtocol {
 		// 先查 Redis
 		String cachedData = cacheEvictionManager.get(key.toString());
 		if (cachedData != null) {
-			System.out.println("缓存命中：" + key + " -> " + cachedData);
 			QueryGenerator.queriedData.put(msg.dataID, 1);  // 标记数据已查询
 			VRouterObserver.successLookupForwardHop.add(msg.forwardHops);  // 记录向前跳数
 			VRouterObserver.successLookupBackwardHop.add(msg.backwardHops);  // 记录向后跳数
@@ -403,32 +404,33 @@ public class VRouterProtocol implements Cloneable, EDProtocol,CDProtocol {
 		return closerNodes;  // 返回更接近的节点
 	}
 	public void handleDataResponseMessage(DataResponseMessage msg) {
-
 		long currentTime = CommonState.getTime();
-		;
 		long latency = currentTime - msg.initialTime;
-		//System.out.println("msg"+msg.initialTime+";当前时间"+currentTime+"latency"+latency);
+
 		String dataKey = msg.dataID.toString();
 
-		// 先检查数据是否存在于缓存
+		// 检查数据是否存在于缓存
 		String cachedData = cacheEvictionManager.get(dataKey);
-		if (cachedData != null) { // 缓存存在时才更新频率
+		if (cachedData != null) { // 缓存存在，仅更新频率和活跃度
 			double existingFrequency = cacheEvictionManager.getFrequency(dataKey);
-			if (existingFrequency != -1.0) { // 确保有效值
+			if (existingFrequency != -1.0) {
 				double newFrequency = existingFrequency + 1;
-				cacheEvictionManager.addToCache(dataKey, newFrequency, msg.distance, msg.activityScore, msg.data);
-				//ttlCacheManager.setTTL(msg.dataID.toString(), 60);
-			} else { // 频率字段丢失时重新初始化
-				cacheEvictionManager.addToCache(dataKey, 1.0, msg.distance, msg.activityScore, msg.data);
-				//ttlCacheManager.setTTL(msg.dataID.toString(), 60);
+				// 只更新频率和活跃度评分，不修改距离
+				double existingDistance = cacheEvictionManager.getDistance(dataKey);
+				cacheEvictionManager.addToCache(dataKey, newFrequency, existingDistance, msg.activityScore, msg.data);
+			} else {
+				// 如果频率字段丢失，重新初始化频率，保持原 distance
+				double existingDistance = cacheEvictionManager.getDistance(dataKey);
+				cacheEvictionManager.addToCache(dataKey, 1.0, existingDistance, msg.activityScore, msg.data);
 			}
-		} else { // 缓存不存在时直接添加
+		} else {
+			// 缓存中没有数据，完整添加，包括 distance
 			cacheEvictionManager.addToCache(dataKey, 1.0, msg.distance, msg.activityScore, msg.data);
-			//ttlCacheManager.setTTL(msg.dataID.toString(), 60);
 		}
-		VRouterObserver.latencyStats.add(latency);
 
+		VRouterObserver.latencyStats.add(latency);
 	}
+
 	public List<AccessRecord> getAccessRecords() {
 		return new ArrayList<>(accessRecords);
 	}

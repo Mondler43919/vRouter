@@ -9,127 +9,159 @@ import peersim.core.Control;
 import peersim.core.Network;
 import peersim.core.Node;
 import peersim.transport.Transport;
+
 import java.math.BigInteger;
 import java.util.*;
 
 public class QueryGenerator implements Control {
-    // 数据分类配置
+    // 论文启发的常量配置
+    private static final double POWER_LAW_EXPONENT = 1.5; // 论文测得的排名变化指数
+    private static final int TOTAL_QUERIES_PER_CYCLE = 1000;
+    private static final double EXTERNAL_EVENT_PROB = 0.3; // 论文中的外部事件概率
+    private static final double TOP_TIER_DECAY = 0.95; // Top10衰减率
+    private static final double BASE_DECAY = 0.85; // 基础衰减率
 
     public static boolean executeFlag = false;
     public static HashMap<BigInteger, DataGenerator.DataInfo> dataRegistry = new HashMap<>();
+    public static Set<String> dataPrefixes = new HashSet<>();
     public static HashMap<BigInteger, Integer> queriedData = new HashMap<>();
 
-    // 配置参数（可通过配置文件覆盖）
-    private final static String PAR_DATA_DISTRIBUTION = "SHORT_TERM_INACTIVE:0.4,LONG_TERM_ACTIVE:0.3,MALICIOUS_SPAM:0.1,LONG_TERM_INACTIVE:0.2";
-    private final static int PAR_TOTAL_NODES = Network.size();
-
     private final int pid;
-    private UniformRandomGenerator urg;
+    private final UniformRandomGenerator urg;
     private final Random random = CommonState.r;
+    private final RankingEngine rankingEngine = new RankingEngine();
 
     public QueryGenerator(String prefix) {
         pid = Configuration.getPid(prefix + ".protocol");
         urg = new UniformRandomGenerator(KademliaCommonConfig.BITS, random);
-
-        // 初始化数据分类
-        initDataDistribution(prefix);
-        System.out.println("[QueryGenerator] Initialized with " + dataRegistry.size() + " data items");
-    }
-
-    private void initDataDistribution(String prefix) {
-        String[] distConfig = Configuration.getString(prefix + ".data_distribution", PAR_DATA_DISTRIBUTION).split(",");
-        Map<DataGenerator.DataType, Double> probMap = new HashMap<>();
     }
 
     public boolean execute() {
-        if (!executeFlag || dataRegistry.isEmpty())
-            return false;
+        if (!executeFlag || dataRegistry.isEmpty()) return false;
 
-        // 选择数据
-        BigInteger query = selectDataByPopularity();
-        DataGenerator.DataInfo dataInfo = dataRegistry.get(query);
+        long currentCycle = CommonState.getTime() / Configuration.getInt("CYCLE");
 
-        // 选择节点
-        Node start = selectStartNode(dataInfo);
-        if (start == null) return false;
-
-        // 发送查询
-        VRouterProtocol p = (VRouterProtocol) start.getProtocol(pid);
-        VLookupMessage msg = new VLookupMessage(
-                query, p.nodeId, true, 0, 0, CommonState.getTime());
-        sendMessage(start, selectTargetNode(dataInfo), pid, msg);
+        // 论文启发的更新流程
+        updateRankings(currentCycle);
+        distributeQueries();
 
         return false;
     }
 
-    private BigInteger selectDataByPopularity() {
-        // 基于流行度的加权随机选择
-        double totalPop = dataRegistry.values().stream()
-                .mapToDouble(info -> info.popularity).sum();
-        double rand = random.nextDouble() * totalPop;
+    // 论文式排名更新（第4章）
+    private void updateRankings(long currentCycle) {
+        List<DataGenerator.DataInfo> activeItems = new ArrayList<>();
 
-        double cumulative = 0;
-        for (BigInteger dataId : dataRegistry.keySet()) {
-            cumulative += dataRegistry.get(dataId).popularity;
-            if (rand <= cumulative) {
-                return dataId;
+        for (DataGenerator.DataInfo info : dataRegistry.values()) {
+            // 分层衰减处理（论文4.2节）
+            applyDecay(info);
+
+            // 状态转换（论文图4）
+            if (info.popularity > 0) {
+                activeItems.add(info);
+                updateActiveState(info, currentCycle);
+            } else {
+                updateInactiveState(info, currentCycle);
             }
         }
-        return dataRegistry.get(random.nextInt(dataRegistry.size())).dataId;
+
+        // 更新排名（论文图3）
+        rankingEngine.updateRanks(activeItems);
     }
 
-    private void updateDataState(DataGenerator.DataInfo info, long currentTime) {
-        switch (info.type) {
-            case SHORT_TERM_INACTIVE:
-                // U型流行度 + 节点变化
-                double phase = (currentTime % 24) / 24.0; // 假设周期为24
-                info.popularity = 50 + 40 * Math.sin(2 * Math.PI * (phase - 0.25));
-                info.activeNodes = (int) (PAR_TOTAL_NODES * 0.3 * (1 + 0.5 * Math.sin(2 * Math.PI * (phase - 0.2))));
-                break;
-
-            case MALICIOUS_SPAM:
-                // 突发性高流行度 + 极少节点
-                if (random.nextDouble() < 0.05) { // 5%概率触发攻击
-                    info.popularity = 500 + random.nextInt(300);
-                    info.activeNodes = 1 + random.nextInt(2);
-                } else {
-                    info.popularity = 5 + random.nextInt(10);
-                    info.activeNodes = 1;
-                }
-                break;
-
-            case LONG_TERM_ACTIVE:
-                // 稳定高流行度 + 多节点
-                info.popularity = 80 + 20 * Math.sin(2 * Math.PI * currentTime / 24);
-                info.activeNodes = (int) (PAR_TOTAL_NODES * (0.6 + 0.1 * random.nextDouble()));
-                break;
-
-            case LONG_TERM_INACTIVE:
-                // 周期性衰减
-                double lifePhase = (currentTime % 72) / 72.0; // 假设3周期
-                info.popularity = 40 * (1 - lifePhase * 0.8);
-                info.activeNodes = (int) (PAR_TOTAL_NODES * 0.4 * (1 - lifePhase * 0.5));
-                break;
+    // 论文式衰减模型（公式3）
+    private void applyDecay(DataGenerator.DataInfo info) {
+        if (rankingEngine.getRank(info.dataId) < 10) {
+            info.popularity *= TOP_TIER_DECAY; // Top10衰减慢
+        } else {
+            info.popularity *= BASE_DECAY + 0.1 * Math.exp(-rankingEngine.getRank(info.dataId) / 50.0);
         }
     }
 
-    private Node selectStartNode(DataGenerator.DataInfo info) {
-        // 恶意流量固定从少数节点发起
-        if (info.type == DataGenerator.DataType.MALICIOUS_SPAM) {
-            return Network.get(info.activeNodes); // 直接使用活跃节点数作为ID
+    // 活跃状态处理（论文4.1节）
+    private void updateActiveState(DataGenerator.DataInfo info, long currentCycle) {
+        // 论文中的突发性增长模式
+        if (shouldApplySurge(info, currentCycle)) {
+            applyPopularitySurge(info);
         }
 
-        // 其他类型随机选择（可扩展为基于节点分布）
-        return getRandomUpNode();
+        info.activeDuration++;
+        info.lastActiveTime = currentCycle;
     }
 
-    private Node selectTargetNode(DataGenerator.DataInfo info) {
-        // 长期活跃数据更可能被随机节点请求
-        if (info.type == DataGenerator.DataType.LONG_TERM_ACTIVE) {
-            return getRandomUpNode();
+    // 不活跃状态处理（论文4.3节）
+    private void updateInactiveState(DataGenerator.DataInfo info, long currentCycle) {
+        info.inactiveDuration++;
+
+        // 论文中的重新激活机制
+        if (shouldReactivate(info)) {
+            reactivateData(info, currentCycle);
         }
-        // 其他类型倾向于固定节点（模拟局部性）
-        return Network.get(random.nextInt(Math.max(1, PAR_TOTAL_NODES / 10)));
+    }
+
+    // 论文中的双模式增长判断（第5章）
+    private boolean shouldApplySurge(DataGenerator.DataInfo info, long currentCycle) {
+        return (random.nextDouble() < EXTERNAL_EVENT_PROB) ||
+                (currentCycle - info.lastSurgeTime > 10);
+    }
+
+    // 论文式突发增长（公式5）
+    private void applyPopularitySurge(DataGenerator.DataInfo info) {
+        if (random.nextDouble() < EXTERNAL_EVENT_PROB) {
+            // 外部事件驱动的突发（30%）
+            info.popularity += 50 * Math.pow(random.nextDouble(), -0.8);
+        } else {
+            // 内部积累效应（70%）
+            info.popularity *= 1.0 + 0.2 * Math.log(info.activeDuration + 1);
+        }
+        info.lastSurgeTime = CommonState.getTime();
+    }
+
+    // 论文式重新激活（图4）
+    private boolean shouldReactivate(DataGenerator.DataInfo info) {
+        double residenceTime = CommonState.getTime() - info.lastActiveTime;
+        double threshold = 10 * Math.pow(info.peakPopularity, -0.6);
+        return residenceTime > threshold &&
+                random.nextDouble() < 0.1 * Math.log(info.historicalPopularity + 1);
+    }
+
+    private void reactivateData(DataGenerator.DataInfo info, long currentCycle) {
+        info.popularity = 1 + Math.pow(random.nextDouble(), -1 / (POWER_LAW_EXPONENT - 1));
+        info.activeDuration = 0;
+        info.lastActiveTime = currentCycle;
+    }
+
+    // 论文启发的查询分配（第3章）
+    private void distributeQueries() {
+        List<DataGenerator.DataInfo> rankedItems = rankingEngine.getRankedList();
+
+        for (int i = 0; i < TOTAL_QUERIES_PER_CYCLE; i++) {
+            DataGenerator.DataInfo selected = selectByRank(rankedItems);
+            executeQuery(selected.dataId);
+        }
+    }
+
+    // 论文式排名加权选择（公式2）
+    private DataGenerator.DataInfo selectByRank(List<DataGenerator.DataInfo> items) {
+        double rankWeight = Math.pow(random.nextDouble(), -1 / POWER_LAW_EXPONENT);
+        int index = (int) (rankWeight % items.size());
+        return items.get(index);
+    }
+
+    private void executeQuery(BigInteger dataId) {
+        DataGenerator.DataInfo info = dataRegistry.get(dataId);
+        if (info == null) return;
+
+        Node start = getRandomUpNode();
+        if (start == null) return;
+
+        // 论文中的查询反馈效应
+        info.popularity += 1 + 0.1 * Math.log(rankingEngine.getRank(dataId) + 1);
+
+        VRouterProtocol p = (VRouterProtocol) start.getProtocol(pid);
+        Transport transport = (Transport) start.getProtocol(FastConfig.getTransport(pid));
+        transport.send(start, getRandomUpNode(),
+                new VLookupMessage(dataId, p.nodeId, true, 0, 0, CommonState.getTime()), pid);
     }
 
     private Node getRandomUpNode() {
@@ -141,13 +173,31 @@ public class QueryGenerator implements Control {
             }
             attempts++;
         }
-        System.err.println("无法找到有效节点");
         return null;
     }
 
-    private void sendMessage(Node sender, Node receiver, int protocolId, Object message) {
-        int transportPid = FastConfig.getTransport(protocolId);
-        Transport transport = (Transport) sender.getProtocol(transportPid);
-        transport.send(sender, receiver, message, protocolId);
+    // 论文启发的排名引擎（第3章）
+    class RankingEngine {
+        private Map<BigInteger, Integer> currentRanks = new HashMap<>();
+        private List<DataGenerator.DataInfo> rankedItems = new ArrayList<>();
+
+        public void updateRanks(List<DataGenerator.DataInfo> activeItems) {
+            // 论文式排名算法
+            activeItems.sort((a, b) -> Double.compare(b.popularity, a.popularity));
+
+            rankedItems = activeItems;
+            currentRanks.clear();
+            for (int i = 0; i < activeItems.size(); i++) {
+                currentRanks.put(activeItems.get(i).dataId, i + 1);
+            }
+        }
+
+        public int getRank(BigInteger dataId) {
+            return currentRanks.getOrDefault(dataId, Integer.MAX_VALUE);
+        }
+
+        public List<DataGenerator.DataInfo> getRankedList() {
+            return Collections.unmodifiableList(rankedItems);
+        }
     }
 }

@@ -5,6 +5,7 @@ import java.util.HashMap;
 import java.util.HashSet;
 import java.util.Map;
 import java.util.Set;
+import peersim.core.CommonState;
 
 public class DataActivityScore {
 
@@ -19,7 +20,7 @@ public class DataActivityScore {
         double weightAccessCount=0.7; // 访问次数的权重
         double weightUniqueAccessNodes=0.2;// 独立访问节点的权重
         double weightstability=0.1; // 稳定性评分权重
-        double[] activityThresholds={0.01, 0.05, 0.15, 0.82, 0.92};  // 活跃度等级阈值
+        double[] activityThresholds={0.15, 0.20, 0.40, 0.82, 0.92};  // 活跃度等级阈值
         double a = 0.3; // 平滑系数 (a)
 
         // 活跃度评分结果
@@ -99,7 +100,7 @@ public class DataActivityScore {
             dataMetrics[1] = accessCount;   // 访问次数
             dataMetrics[2] = uniqueAccessNodes; // 独立访问节点数
             dataMetrics[3] = activityLevel;   // 活跃度等级
-            dataMetrics[4] = inactive ? 0 : 1; // 活跃状态：0 - 不活跃, 1 - 活跃
+            dataMetrics[4] = (inactive && CommonState.getTime()/1000 >= 123) ? 0 : 1; // 活跃状态：0 - 不活跃, 1 - 活跃
 
             activityMetrics.put(dataId, dataMetrics);
         }

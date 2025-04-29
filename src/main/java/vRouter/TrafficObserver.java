@@ -29,18 +29,25 @@ public class TrafficObserver implements Control {
 
 		// 构建输出字符串
 		String indexS = String.format(
-				"index hops:max=%f,avg=%f;",
-				VRouterObserver.indexHop.getMax(),
-				VRouterObserver.indexHop.getAverage()
+				"hops:max=%f,avg=%f;",
+				VRouterObserver.totalSuccessHops.getMax(),
+				VRouterObserver.totalSuccessHops.getAverage()
 		);
-		String trafficI = calculateTraffic(VRouterObserver.dataIndexTraffic);
+		String trafficI = calculateTraffic(VRouterObserver.dataQueryTraffic);
 		String latencyS = String.format(
-				"Latency: max=%f ms, avg=%f ms",
+				"Latency: max=%f ms, avg=%f ms;",
 				VRouterObserver.latencyStats.getMax(),
 				VRouterObserver.latencyStats.getAverage()
 		);
-		String output = indexS + trafficI + latencyS + "\n"; // 添加换行符
-		System.err.println(indexS + trafficI+latencyS );
+		// String recycleMetrics = String.format(
+		// 		"回收统计: 误回收=%.1f%% 漏回收=%.1f%%",
+		// 		VRouterObserver.getWrongRecycleRate() * 100,
+		// 		VRouterObserver.getMissedRecycleRate() * 100
+		// );
+		String output = indexS + trafficI + latencyS ;
+		System.err.println(output);
+
+		output = output+ "\n"; // 添加换行符
 		// 写入文件
 		if (fileWriter != null) {
 			try {
