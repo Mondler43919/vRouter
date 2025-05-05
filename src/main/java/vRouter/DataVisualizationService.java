@@ -6,6 +6,8 @@ import org.jzy3d.colors.Color;
 import org.jzy3d.maths.Coord3d;
 import org.jzy3d.plot3d.primitives.LineStrip;
 import org.jzy3d.plot3d.rendering.canvas.Quality;
+
+import org.knowm.xchart.XYSeries;
 import peersim.core.CommonState;
 import peersim.core.Control;
 
@@ -16,7 +18,7 @@ public class DataVisualizationService implements Control {
     private static DataVisualizationService instance; // 静态单例
 
     private final Chart chart;
-    private final Map<String, List<int[]>> nodeStats = new ConcurrentHashMap<>();
+    private final Map<String, List<Object[]>> nodeStats = new ConcurrentHashMap<>();
     private final Color[] colorPalette;
     private int colorIndex = 0;
 
@@ -41,18 +43,20 @@ public class DataVisualizationService implements Control {
         }
         return instance;
     }
-    public synchronized void updatePerRound(long round,
-                                            Map<String, Integer> accessCounts,
-                                            Map<String, Set<String>> accessNodes) {
+    public synchronized void updatePerRound(
+            long round,
+            Map<String, Integer> accessCounts,
+            Map<String, Set<String>> accessNodes,
+            Map<String, double[]> dataScores) {
 
-        // Update statistics for each node that had activity
-        accessCounts.forEach((nodeId, count) -> {
-            // Get or create the stats list for this node
-            List<int[]> stats = nodeStats.computeIfAbsent(nodeId, k -> new ArrayList<>());
-            int nodeCount=accessNodes.get(nodeId).size();
-
-            // Add current round's data: [nodeCount, round, accessCount]
-            stats.add(new int[]{nodeCount, (int)round, count});
+        accessCounts.forEach((dataId, accessCount) -> {
+            int nodeCount = accessNodes.getOrDefault(dataId, Collections.emptySet()).size();
+            if(dataScores.containsKey(dataId)){
+                double score = dataScores.get(dataId)[0];
+                int recycled =(int) dataScores.get(dataId)[4];
+                int level = (int) dataScores.get(dataId)[3];
+                ExcelLogger.SimpleLogger.logSimpleAccess(round, dataId, accessCount, nodeCount, score,recycled,level);
+            }
         });
     }
 
@@ -74,9 +78,9 @@ public class DataVisualizationService implements Control {
 
             // Add all data points for this node
             statsList.forEach(stats -> {
-                int nodeCount = stats[0];
-                int round = stats[1];
-                int accessCount = stats[2];
+                int nodeCount =(int) stats[0];
+                int round =(int) stats[1];
+                int accessCount =(int) stats[2];
 
                 Coord3d point = new Coord3d(nodeCount, round, accessCount);
                 line.add(point);

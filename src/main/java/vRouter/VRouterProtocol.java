@@ -46,6 +46,8 @@ public class VRouterProtocol implements Cloneable, EDProtocol,CDProtocol {
 
 	public HashMap<BigInteger,Integer> handledIndex = new HashMap<>();  // 记录已处理的索引消息
 	public HashMap<BigInteger,Integer> handledQuery = new HashMap<>();  // 记录已处理的查询消息
+	public HashMap<String,Integer> handledDataAccess = new HashMap<>();  // 记录已处理的查询消息
+	public HashMap<String,Integer> handleBlock = new HashMap<>();
 	public CacheEvictionManager cacheEvictionManager;  // 缓存淘汰管理器
 	private TTLCacheManager ttlCacheManager;  // TTL 缓存管理器
 	private Integer accessCount;
@@ -140,6 +142,30 @@ public class VRouterProtocol implements Cloneable, EDProtocol,CDProtocol {
 
 		_ALREADY_INSTALLED = true;  // 标记已初始化
 	}
+	/**
+	 * set the current NodeId
+	 *
+	 * 设置当前节点的 NodeId
+	 *
+	 * @param tmp
+	 *            BigInteger
+	 */
+	public void setNodeId(BigInteger tmp) {
+		this.nodeId = tmp;  // 设置当前节点的 ID
+		this.routingTable.nodeId = tmp;  // 设置路由表中的节点 ID
+		this.cacheEvictionManager = new CacheEvictionManager(
+				"127.0.0.1",
+				6379,
+				this.nodeId.toString(),
+				10,
+				0.5, 0.2, 0.3
+		);
+		this.ttlCacheManager = new TTLCacheManager(
+				"127.0.0.1",
+				6379,
+				this.nodeId.toString()
+		);
+	}
 
 	/**
 	 * Search through the network the Node having a specific node Id, by performing binary search (we concern about the ordering
@@ -184,6 +210,39 @@ public class VRouterProtocol implements Cloneable, EDProtocol,CDProtocol {
 		}
 		return null;  // 未找到目标节点，返回 null
 	}
+	//该方法获取目标数据的邻居节点，并返回与目标数据更接近的节点
+	public BigInteger[] getCloserNodes(BigInteger targetID) {
+		BigInteger[] neighbors = routingTable.getNeighbours(targetID);  // 获取目标数据的邻居节点
+
+		int targetFlag = 0;
+		for (int i = 0; i < neighbors.length; i++) {
+			// 如果目标节点更远，停止
+			if (Util.distance(neighbors[i], targetID).compareTo(Util.distance(this.nodeId, targetID)) >= 0) break;
+			targetFlag++;
+		}
+
+		BigInteger[] closerNodes = new BigInteger[Math.min(targetFlag, KademliaCommonConfig.ALPHA)];
+		// 复制更接近的邻居节点
+		for (int i = 0; i < Math.min(targetFlag, KademliaCommonConfig.ALPHA); i++) {
+			closerNodes[i] = neighbors[i];
+		}
+		return closerNodes;  // 返回更接近的节点
+	}
+	//该函数用于存储数据并生成相应的索引消息，之后将消息发送到更接近数据的节点。
+	public void storeData(BigInteger dataID, int protocolID) {
+		dataStorage.put(dataID, 0);  // 将数据存储到本地
+		IndexMessage msg = new IndexMessage(dataID, this.nodeId);  // 创建索引消息
+		BigInteger[] closerNodes = getCloserNodes(msg.dataID);  // 获取更接近目标数据的节点
+
+		// 将索引消息发送给更接近的节点
+		for (int i = 0; i < closerNodes.length; i++) {
+			Node targetNode = this.nodeIdtoNode(closerNodes[i]);
+			VRouterProtocol targetPro = (VRouterProtocol) targetNode.getProtocol(protocolID);
+			targetPro.indexMessages.add(msg);  // 将索引消息添加到目标节点的队列中
+			sendMessage(nodeIdtoNode(nodeId),targetNode, protocolID, msg);
+
+		}
+	}
 	private void updateDataMetrics(String sourceNodeId, String dataId) {
 
 		// 更新总访问次数
@@ -200,30 +259,7 @@ public class VRouterProtocol implements Cloneable, EDProtocol,CDProtocol {
 		uniqueAccessNodes.clear();
 		dataAccessCount.clear();
 		dataAccessNode.clear();
-	}
-	/**
-	 * set the current NodeId
-	 *
-	 * 设置当前节点的 NodeId
-	 *
-	 * @param tmp
-	 *            BigInteger
-	 */
-	public void setNodeId(BigInteger tmp) {
-		this.nodeId = tmp;  // 设置当前节点的 ID
-		this.routingTable.nodeId = tmp;  // 设置路由表中的节点 ID
-		this.cacheEvictionManager = new CacheEvictionManager(
-				"127.0.0.1",
-				6379,
-				this.nodeId.toString(),
-				10,
-				0.5, 0.2, 0.3
-		);
-		this.ttlCacheManager = new TTLCacheManager(
-				"127.0.0.1",
-				6379,
-				this.nodeId.toString()
-		);
+		accessRecords.clear();
 	}
 
 	@Override
@@ -235,10 +271,11 @@ public class VRouterProtocol implements Cloneable, EDProtocol,CDProtocol {
 		} else if (event instanceof IndexMessage) {
 			handleIndexMessage((IndexMessage) event, protocolID);
 		} else if (event instanceof DataAccessMessage) {
-			CentralNodeManager manager = ((MyNode) node).getCentralNodeManager();
-			manager.processDataAccessMessage((DataAccessMessage) event);
+			handleDataAccessMessage((MyNode)node,(DataAccessMessage) event, protocolID);
 		} else if (event instanceof DataResponseMessage) {
 			handleDataResponseMessage((DataResponseMessage) event);
+		}else if(event instanceof Block){
+			handleBlockMessage((MyNode)node,(Block) event, protocolID);
 		}
 	}
 
@@ -255,13 +292,10 @@ public class VRouterProtocol implements Cloneable, EDProtocol,CDProtocol {
 		String input = timestamp + "|" + this.nodeId.toString(16) + "|" + msg.from.toString(16) + "|" + msg.dataID.toString(16);
 		String hash = HashUtils.SHA256(input);
 
-		//	ExcelLogger.logDataAccess(currentCycle, timestamp,this.nodeId, msg.from, msg.dataID,hash);
 		AccessRecord record = new AccessRecord(timestamp, this.nodeId, msg.from, msg.dataID,hash);
 		accessRecords.add(record);
 
 		updateDataMetrics(msg.from.toString(16),msg.dataID.shiftRight(72).toString(16));
-
-		// VRouterObserver.currentBlockTxCount.incrementAndGet();
 
 		if(VRouterObserver.dataQueryTraffic.get(msg.dataID) != null) {  // 如果数据查询已经有记录，更新查询次数
 			int msgs = VRouterObserver.dataQueryTraffic.get(msg.dataID);
@@ -359,10 +393,7 @@ public class VRouterProtocol implements Cloneable, EDProtocol,CDProtocol {
 		// 将中继消息发送给更接近的数据节点
 		for (BigInteger closerNode : closerNodes) {
 			Node targetNode = this.nodeIdtoNode(closerNode);
-//			VRouterProtocol targetPro = (VRouterProtocol) targetNode.getProtocol(protocolID);
-//			targetPro.indexMessages.add(relay);  // 将消息添加到目标节点的索引消息队列
 			sendMessage(nodeIdtoNode(nodeId),targetNode, protocolID, relay);
-
 		}
 		// 如果没有更接近的节点，记录当前节点的跳数
 		if(closerNodes.length == 0) {
@@ -370,38 +401,75 @@ public class VRouterProtocol implements Cloneable, EDProtocol,CDProtocol {
 		}
 		handledIndex.put(msg.dataID, 1);  // 标记该索引消息已处理
 	}
-	//该函数用于存储数据并生成相应的索引消息，之后将消息发送到更接近数据的节点。
-	public void storeData(BigInteger dataID, int protocolID) {
-		dataStorage.put(dataID, 0);  // 将数据存储到本地
-		IndexMessage msg = new IndexMessage(dataID, this.nodeId);  // 创建索引消息
-		BigInteger[] closerNodes = getCloserNodes(msg.dataID);  // 获取更接近目标数据的节点
+	public void handleDataAccessMessage(MyNode myNode, DataAccessMessage msg, int protocolID) {
 
-		// 将索引消息发送给更接近的节点
-		for (int i = 0; i < closerNodes.length; i++) {
-			Node targetNode = this.nodeIdtoNode(closerNodes[i]);
-			VRouterProtocol targetPro = (VRouterProtocol) targetNode.getProtocol(protocolID);
-			targetPro.indexMessages.add(msg);  // 将索引消息添加到目标节点的队列中
-			sendMessage(nodeIdtoNode(nodeId),targetNode, protocolID, msg);
+		CentralNodeManager manager = myNode.getCentralNodeManager();
+		manager.processDataAccessMessage(msg);
+		VRouterObserver.totalBytesTransferred.addAndGet(msg.cachedSize);
 
-		}
+		// // 判断当前节点是否为中心节点
+		// if (this.nodeId.equals(msg.to)) {
+		// 	// 如果是中心节点，交给CentralNodeManager处理
+		// 	CentralNodeManager manager = myNode.getCentralNodeManager();
+		// 	manager.processDataAccessMessage(msg);
+		// 	return;
+		// }
+
+
+
+		// // 设置当前协议ID
+		// this.vRouterID = protocolID;
+		//
+		// if(handledDataAccess.containsKey(msg.merkleRoot)) return;
+
+		// // 判断当前节点是否为中心节点
+		// if (this.nodeId.equals(msg.to)) {
+		// 	// 如果是中心节点，交给CentralNodeManager处理
+		// 	CentralNodeManager manager = myNode.getCentralNodeManager();
+		// 	manager.processDataAccessMessage(msg);
+		// 	return;
+		// }
+		// // 查找更接近目标（中心节点）的节点
+		// BigInteger[] closerNodes = getCloserNodes(msg.to);
+		//
+		// // 转发给所有更接近的节点
+		// for (BigInteger closerNode : closerNodes) {
+		// 	Node targetNode = this.nodeIdtoNode(closerNode);
+		// 	if (targetNode != null) {
+		// 		sendMessage(nodeIdtoNode(nodeId), targetNode, protocolID, msg);
+		// 	}
+		// }
+		// handledDataAccess.put(msg.merkleRoot, 1);
 	}
-	//该方法获取目标数据的邻居节点，并返回与目标数据更接近的节点
-	public BigInteger[] getCloserNodes(BigInteger targetID) {
-		BigInteger[] neighbors = routingTable.getNeighbours(targetID);  // 获取目标数据的邻居节点
+	public void handleBlockMessage(MyNode myNode, Block msg, int protocolID) {
+		// 基础处理
+		this.vRouterID = protocolID;
+		VRouterObserver.totalBytesTransferred.addAndGet(msg.cachedSize);
 
-		int targetFlag = 0;
-		for (int i = 0; i < neighbors.length; i++) {
-			// 如果目标节点更远，停止
-			if (Util.distance(neighbors[i], targetID).compareTo(Util.distance(this.nodeId, targetID)) >= 0) break;
-			targetFlag++;
+		// 去重检查
+		String blockHash = msg.getBlockHash();
+		if(handleBlock.containsKey(blockHash)) return;
+
+		// 处理区块
+		myNode.receiveBlock(msg);
+		sendBlock2Neighbors(msg);
+
+		// 更新接收计数
+		int receivedCount = VRouterObserver.blocksReceivedCount.incrementAndGet();
+
+		// 当2/3节点接收时计算传播时间
+		if (receivedCount >= VRouterObserver.REQUIRED_CONFIRMATIONS && VRouterObserver.blockCreationTimes.containsKey(blockHash)) {
+			long propagationTime = CommonState.getTime() -
+					VRouterObserver.blockCreationTimes.get(blockHash);
+			System.out.println("产块时间： "+propagationTime);
+			VRouterObserver.blockPropagationTime.add(propagationTime);
+
+			// 重置计数（为下一个区块准备）
+			VRouterObserver.blocksReceivedCount.set(0);
+			VRouterObserver.blockCreationTimes.remove(blockHash);
 		}
 
-		BigInteger[] closerNodes = new BigInteger[Math.min(targetFlag, KademliaCommonConfig.ALPHA)];
-		// 复制更接近的邻居节点
-		for (int i = 0; i < Math.min(targetFlag, KademliaCommonConfig.ALPHA); i++) {
-			closerNodes[i] = neighbors[i];
-		}
-		return closerNodes;  // 返回更接近的节点
+		handleBlock.put(blockHash, 1);
 	}
 	public void handleDataResponseMessage(DataResponseMessage msg) {
 		long currentTime = CommonState.getTime();
@@ -431,19 +499,20 @@ public class VRouterProtocol implements Cloneable, EDProtocol,CDProtocol {
 		VRouterObserver.latencyStats.add(latency);
 	}
 
-	public List<AccessRecord> getAccessRecords() {
-		return new ArrayList<>(accessRecords);
-	}
-
-	public void clearAccessRecords() {
-		accessRecords.clear();
-	}
-
-
 	public void sendMessage(Node sender, Node targetNode, int protocolID, Object message) {
 		int transportPid = FastConfig.getTransport(protocolID);
 		Transport transport = (Transport) sender.getProtocol(transportPid);
 		transport.send(sender, targetNode, message, protocolID);
+	}
+	public void sendBlock2Neighbors(Block block){
+		BigInteger[] neighbors = routingTable.getRandomNeighbours(5);
+		// 转发给所有更接近的节点
+		for (BigInteger closerNode : neighbors) {
+			Node targetNode = this.nodeIdtoNode(closerNode);
+			if (targetNode != null) {
+				sendMessage(nodeIdtoNode(nodeId), targetNode, 0, block);
+			}
+		}
 	}
 	@Override
 	public void nextCycle(Node node, int protocolID) {
@@ -453,28 +522,34 @@ public class VRouterProtocol implements Cloneable, EDProtocol,CDProtocol {
 			MyNode myNode = (MyNode) node;
 			this.vRouterID = protocolID;
 			BigInteger centralNodeID = new BigInteger(myNode.getBlockchain().getCentralNodeId());
-			handleRegularNodeTasks(node, centralNodeID, currentCycle);
-			// System.out.println("时间 " +time+"   from:"+node.getID()+"   to:"+centralNodeID);
+			BigInteger input=BigInteger.valueOf(Instant.now().toEpochMilli());
+			VRFElection.VRFOutput vrfoutput=((MyNode)node).generateVRFOutput(input);
+
+			DataAccessMessage message =new DataAccessMessage(
+					this.nodeId,
+					centralNodeID,
+					NodeActivityScore.calculateActivityScore(accessCount, uniqueAccessNodes.size(), dataAccessCount),
+					accessCount,
+					uniqueAccessNodes.size(),
+					new HashMap<>(dataAccessCount),
+					new HashMap<>(dataAccessNode),
+					new ArrayList<>(accessRecords),
+					input,
+					vrfoutput,
+					currentCycle
+			);
+			sendMessage(nodeIdtoNode(nodeId), nodeIdtoNode(centralNodeID), protocolID, message);
+			// // 查找更接近目标（中心节点）的节点
+			// BigInteger[] closerNodes = getCloserNodes(centralNodeID);
+
+			// // 转发给所有更接近的节点
+			// for (BigInteger closerNode : closerNodes) {
+			// 	Node targetNode = this.nodeIdtoNode(closerNode);
+			// 	if (targetNode != null) {
+			// 		sendMessage(nodeIdtoNode(nodeId), targetNode, protocolID, message);
+			// 	}
+			// }
+			// initDataMetrics();
 		}
-	}
-	private void handleRegularNodeTasks(Node node,BigInteger centralNodeID, long currentCycle) {
-
-		BigInteger input=BigInteger.valueOf(Instant.now().toEpochMilli());
-		VRFElection.VRFOutput vrfoutput=((MyNode)node).generateVRFOutput(input);
-
-		DataAccessMessage message =new DataAccessMessage(
-				this.nodeId,
-				NodeActivityScore.calculateActivityScore(accessCount, uniqueAccessNodes.size(), dataAccessCount),
-				accessCount,
-				uniqueAccessNodes.size(),
-				new HashMap<>(dataAccessCount),
-				new HashMap<>(dataAccessNode),
-				new ArrayList<>(accessRecords),
-				input,
-				vrfoutput,
-				currentCycle
-		);
-		sendMessage(node, nodeIdtoNode(centralNodeID), vRouterID, message);
-		initDataMetrics();
 	}
 }

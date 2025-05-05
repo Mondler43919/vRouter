@@ -2,7 +2,7 @@ package vRouter;
 
 import java.math.BigInteger;
 import java.security.*;
-import java.time.Instant;
+import java.io.Serializable;
 import java.util.*;
 
 import peersim.core.Network;
@@ -10,7 +10,9 @@ import peersim.core.Network;
 public class VRFElection {
 
     // **VRF 计算结果类**
-    public static class VRFOutput {
+    public static class VRFOutput implements Serializable {
+        private static final long serialVersionUID = 1L;  // 添加 serialVersionUID
+
         private final BigInteger randomValue; // 伪随机数
         private final String proof; // 证明字符串
 

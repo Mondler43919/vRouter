@@ -2,6 +2,8 @@ package kademlia;
 
 import java.math.BigInteger;
 import java.util.ArrayList;
+import java.util.Collections;
+import java.util.Random;
 import java.util.TreeMap;
 
 /**
@@ -113,6 +115,24 @@ public class RoutingTable implements Cloneable {
 	 */
 	public String toString() {
 		return "";
+	}
+	public BigInteger[] getRandomNeighbours(int n) {
+		// Create a list of all available neighbours
+		ArrayList<BigInteger> allNeighbours = new ArrayList<>();
+
+		// Collect all neighbours from all k-buckets
+		for (KBucket bucket : k_buckets.values()) {
+			allNeighbours.addAll(bucket.neighbours.keySet());
+		}
+
+		// If there are fewer neighbours than requested, return all of them
+		if (allNeighbours.size() <= n) {
+			return allNeighbours.toArray(new BigInteger[0]);
+		}
+
+		// Otherwise, select n random neighbours
+		Collections.shuffle(allNeighbours, new Random( 12345L)); // Shuffle the list to randomize
+		return allNeighbours.subList(0, n).toArray(new BigInteger[0]);
 	}
 	// ______________________________________________________________________________________________
 

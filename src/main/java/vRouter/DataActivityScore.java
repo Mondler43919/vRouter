@@ -5,9 +5,12 @@ import java.util.HashMap;
 import java.util.HashSet;
 import java.util.Map;
 import java.util.Set;
+
+import peersim.config.Configuration;
 import peersim.core.CommonState;
 
 public class DataActivityScore {
+    public static double cycleLength=(double) Configuration.getInt("CYCLE");
 
     // 计算所有数据的活跃度评分
     public static HashMap<String, double[]> calculateActivityScore(
@@ -20,14 +23,14 @@ public class DataActivityScore {
         double weightAccessCount=0.7; // 访问次数的权重
         double weightUniqueAccessNodes=0.2;// 独立访问节点的权重
         double weightstability=0.1; // 稳定性评分权重
-        double[] activityThresholds={0.15, 0.20, 0.40, 0.82, 0.92};  // 活跃度等级阈值
-        double a = 0.3; // 平滑系数 (a)
+        double[] activityThresholds={0.05, 0.15, 0.40, 0.82, 0.92};  // 活跃度等级阈值
+        double a = 0.4; // 平滑系数 (a)s
 
         // 活跃度评分结果
         HashMap<String, double[]> activityMetrics = new HashMap<>();
         HashMap<String, Double> scoreCache = new HashMap<>();
         double maxScore = 0.0;
-        double threshold2 = activityThresholds[2]; // ʘ2 作为初始活跃度判断标准
+        double threshold2 = activityThresholds[1]; // ʘ2 作为初始活跃度判断标准
 
         // 单次遍历：计算score并记录maxScore
         for (Map.Entry<String, Integer> entry : dataAccessCounts.entrySet()) {
@@ -80,7 +83,7 @@ public class DataActivityScore {
                         maxHistoryLevel = level;
                     }
                 }
-                if (maxHistoryLevel < 4) { // 历史最高活跃度等级小于 4，标记为“不活跃”
+                if (maxHistoryLevel < 2) { // 历史最高活跃度等级小于 4，标记为“不活跃”
                     inactive = true;
                 }
             }
@@ -100,7 +103,7 @@ public class DataActivityScore {
             dataMetrics[1] = accessCount;   // 访问次数
             dataMetrics[2] = uniqueAccessNodes; // 独立访问节点数
             dataMetrics[3] = activityLevel;   // 活跃度等级
-            dataMetrics[4] = (inactive && CommonState.getTime()/1000 >= 123) ? 0 : 1; // 活跃状态：0 - 不活跃, 1 - 活跃
+            dataMetrics[4] = (inactive && CommonState.getTime()/cycleLength >= 123) ? 0 : 1; //0 - 不活跃, 1 - 活跃
 
             activityMetrics.put(dataId, dataMetrics);
         }

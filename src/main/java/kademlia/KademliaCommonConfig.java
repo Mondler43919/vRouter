@@ -11,7 +11,7 @@ public class KademliaCommonConfig {
 	public static int BITS = 128; // length of Id (default is 160)
 
 	public static int K = 20; // dimension of k-buckets (default is 20)
-	public static int ALPHA = 3; // number of simultaneous lookup (default is 3)
+	public static int ALPHA = 10; // number of simultaneous lookup (default is 3)
 
 	/**
 	 * short information about current mspastry configuration

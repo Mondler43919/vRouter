@@ -31,15 +31,7 @@ public class DataGenerator implements Control {
     public static class DataInfo {
         public BigInteger dataId;
         public String prefix;
-        public double popularity; // 当前流行度
         public boolean recycled;
-        public long lastActiveTime; // 上次活跃时间
-        public long activeDuration; // 活跃持续时间
-        public long inactiveDuration; // 不活跃持续时间
-        public double historicalPopularity;
-        public double peakPopularity;
-        public long lastSurgeTime;
-        public int currentRank;
     }
 
     public DataGenerator(String prefix) {
@@ -61,8 +53,14 @@ public class DataGenerator implements Control {
             QueryGenerator.executeFlag = true;
             return false;
         }
-
-        if (turns >= dataGenerateSimCycle) return false;
+        if (turns >= dataGenerateSimCycle) {
+            // 数据生成阶段结束
+            if (turns == dataGenerateSimCycle) {
+                // 只在第一次到达时初始化排名
+                QueryGenerator.initializeGlobalRanking();
+            }
+            return false;
+        }
 
         for (int i = 0; i < dataPerCycle; i++) {
             Node start = getRandomUpNode();
@@ -87,14 +85,9 @@ public class DataGenerator implements Control {
             info.dataId = dataID;
             info.prefix = prefixBigInt.toString(16);
             info.recycled = false;
-            info.lastActiveTime = CommonState.getTime();
-
-            // 使用Zipf分布设置初始活跃度
-            info.popularity = MIN_ACTIVITY + zipf.sample();
 
             QueryGenerator.dataRegistry.put(dataID, info);
             QueryGenerator.dataPrefixes.add(prefixBigInt.toString(16));
-            VRouterObserver.totalData.incrementAndGet();
             p.storeData(dataID, pid);
         }
         return false;

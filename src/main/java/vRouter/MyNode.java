@@ -129,9 +129,6 @@ public class MyNode extends GeneralNode{
                         if(dataId==null||QueryGenerator.dataRegistry.get(dataId)==null){
                             System.err.println("lalalalla");
                         }
-                        // else{
-                        //     VRouterObserver.recordDataRecycle(dataId,QueryGenerator.dataRegistry.get(dataId));
-                        // }
 
                     } else {
                         cacheManager.updateCacheEntry(cachedKey, metrics[0]);
@@ -161,7 +158,7 @@ public class MyNode extends GeneralNode{
         for (Map.Entry<String, double[]> entry : dataScores.entrySet()) {
             String dataId = entry.getKey();
             int accessCount = (int)entry.getValue()[0]; // 访问次数
-            int activityLevel =(int) entry.getValue()[1]; // 活跃度等级
+            int activityLevel =(int) entry.getValue()[3]; // 活跃度等级
 
             // 如果 historyData 中没有该数据，初始化 2*10 数组
             historyData.putIfAbsent(dataId, new int[2][10]);
@@ -169,18 +166,6 @@ public class MyNode extends GeneralNode{
             // 更新该数据 ID 对应的数组
             historyData.get(dataId)[0][index] = accessCount;   // 存入访问次数
             historyData.get(dataId)[1][index] = activityLevel; // 存入活跃度等级
-        }
-
-        // 遍历 historyData，将 `BlockData` 未包含的数据置 0
-        for (Map.Entry<String, int[][]> entry : historyData.entrySet()) {
-            String dataId = entry.getKey();
-            int[][] dataArray = entry.getValue();
-
-            // 如果该数据 ID 不在 `BlockData` 中，置 0
-            if (!dataScores.containsKey(dataId)) {
-                dataArray[0][index] = 0; // 访问次数置 0
-                dataArray[1][index] = 0; // 活跃度等级置 0
-            }
         }
     }
 

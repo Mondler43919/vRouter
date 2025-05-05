@@ -14,13 +14,10 @@ import java.math.BigInteger;
 import java.util.*;
 
 public class QueryGenerator implements Control {
-    // 论文启发的常量配置
-    private static final double POWER_LAW_EXPONENT = 1.5; // 论文测得的排名变化指数
     private static final int TOTAL_QUERIES_PER_CYCLE = 1000;
-    private static final double EXTERNAL_EVENT_PROB = 0.3; // 论文中的外部事件概率
-    private static final double TOP_TIER_DECAY = 0.95; // Top10衰减率
-    private static final double BASE_DECAY = 0.85; // 基础衰减率
-
+    private static final double MARKOV_STABILITY = 0.93;         // 保持原排名的概率
+    private static final double NEAR_RANK_TRANSITION = 0.05;     // 轻微跳动的概率
+    private static final double ZIPF_ALPHA = 0.6;   //zipf越大数据越极端
     public static boolean executeFlag = false;
     public static HashMap<BigInteger, DataGenerator.DataInfo> dataRegistry = new HashMap<>();
     public static Set<String> dataPrefixes = new HashSet<>();
@@ -29,7 +26,10 @@ public class QueryGenerator implements Control {
     private final int pid;
     private final UniformRandomGenerator urg;
     private final Random random = CommonState.r;
-    private final RankingEngine rankingEngine = new RankingEngine();
+    private static List<BigInteger> globalRanking = new ArrayList<>();
+    private static Map<BigInteger, Integer> rankMap = new HashMap<>();
+    private static double[] zipfProbabilities = null;
+
 
     public QueryGenerator(String prefix) {
         pid = Configuration.getPid(prefix + ".protocol");
@@ -37,115 +37,102 @@ public class QueryGenerator implements Control {
     }
 
     public boolean execute() {
-        if (!executeFlag || dataRegistry.isEmpty()) return false;
+        if (!executeFlag) return false;
 
-        long currentCycle = CommonState.getTime() / Configuration.getInt("CYCLE");
+        // 1. 马尔可夫排名转移
+        applyMarkovRankTransitions();
 
-        // 论文启发的更新流程
-        updateRankings(currentCycle);
-        distributeQueries();
+        // 2. 生成查询
+        generateZipfQueries();
 
         return false;
     }
+    // 初始化全局排名（在所有数据生成后调用一次）
+    public static void initializeGlobalRanking() {
+        globalRanking.clear();
+        globalRanking.addAll(dataRegistry.keySet());
 
-    // 论文式排名更新（第4章）
-    private void updateRankings(long currentCycle) {
-        List<DataGenerator.DataInfo> activeItems = new ArrayList<>();
+        // 初始Zipf排名
+        Collections.shuffle(globalRanking); // 先随机打乱
+        rankMap.clear();
+        for (int i = 0; i < globalRanking.size(); i++) {
+            rankMap.put(globalRanking.get(i), i+1);
+        }
+        int size = globalRanking.size();
+        zipfProbabilities = new double[size];
+        double totalWeight = 0.0;
 
-        for (DataGenerator.DataInfo info : dataRegistry.values()) {
-            // 分层衰减处理（论文4.2节）
-            applyDecay(info);
+        for (int i = 0; i < size; i++) {
+            zipfProbabilities[i] = 1.0 / Math.pow(i + 1, ZIPF_ALPHA);
+            totalWeight += zipfProbabilities[i];
+        }
 
-            // 状态转换（论文图4）
-            if (info.popularity > 0) {
-                activeItems.add(info);
-                updateActiveState(info, currentCycle);
-            } else {
-                updateInactiveState(info, currentCycle);
+        for (int i = 0; i < size; i++) {
+            zipfProbabilities[i] /= totalWeight;
+        }
+    }
+    private void applyMarkovRankTransitions() {
+        // 创建副本以避免修改原始数组
+        List<BigInteger> newRanking = new ArrayList<>(globalRanking);
+
+        for (int i = 0; i < newRanking.size(); i++) {
+            BigInteger dataId = newRanking.get(i);
+            int currentRank = i + 1;  // 数组索引从0开始，排名从1开始
+
+            // 计算新的期望排名
+            int newRank = calculateNewRank(currentRank);
+
+            // 确保新排名有效且与当前不同
+            if (newRank != currentRank && newRank > 0 && newRank <= newRanking.size()) {
+                // 直接交换两个位置的数据
+                Collections.swap(newRanking, currentRank-1, newRank-1);
             }
         }
 
-        // 更新排名（论文图3）
-        rankingEngine.updateRanks(activeItems);
+        // 更新全局排名和排名映射
+        updateGlobalRanking(newRanking);
     }
 
-    // 论文式衰减模型（公式3）
-    private void applyDecay(DataGenerator.DataInfo info) {
-        if (rankingEngine.getRank(info.dataId) < 10) {
-            info.popularity *= TOP_TIER_DECAY; // Top10衰减慢
+    private void updateGlobalRanking(List<BigInteger> newRanking) {
+        globalRanking = newRanking;
+        rankMap.clear();
+        for (int i = 0; i < globalRanking.size(); i++) {
+            rankMap.put(globalRanking.get(i), i+1);
+        }
+    }
+
+    private int calculateNewRank(int currentRank) {
+        double rand = random.nextDouble();
+        if (rand < MARKOV_STABILITY) {
+            return currentRank;
+        } else if (rand < MARKOV_STABILITY + NEAR_RANK_TRANSITION) {
+            int shift = random.nextInt(2) + 1;
+            return currentRank + (random.nextBoolean() ? shift : -shift);
         } else {
-            info.popularity *= BASE_DECAY + 0.1 * Math.exp(-rankingEngine.getRank(info.dataId) / 50.0);
+            int shift = random.nextInt(3) + 2;
+            return currentRank + (random.nextBoolean() ? shift : -shift);
         }
     }
 
-    // 活跃状态处理（论文4.1节）
-    private void updateActiveState(DataGenerator.DataInfo info, long currentCycle) {
-        // 论文中的突发性增长模式
-        if (shouldApplySurge(info, currentCycle)) {
-            applyPopularitySurge(info);
-        }
-
-        info.activeDuration++;
-        info.lastActiveTime = currentCycle;
-    }
-
-    // 不活跃状态处理（论文4.3节）
-    private void updateInactiveState(DataGenerator.DataInfo info, long currentCycle) {
-        info.inactiveDuration++;
-
-        // 论文中的重新激活机制
-        if (shouldReactivate(info)) {
-            reactivateData(info, currentCycle);
-        }
-    }
-
-    // 论文中的双模式增长判断（第5章）
-    private boolean shouldApplySurge(DataGenerator.DataInfo info, long currentCycle) {
-        return (random.nextDouble() < EXTERNAL_EVENT_PROB) ||
-                (currentCycle - info.lastSurgeTime > 10);
-    }
-
-    // 论文式突发增长（公式5）
-    private void applyPopularitySurge(DataGenerator.DataInfo info) {
-        if (random.nextDouble() < EXTERNAL_EVENT_PROB) {
-            // 外部事件驱动的突发（30%）
-            info.popularity += 50 * Math.pow(random.nextDouble(), -0.8);
-        } else {
-            // 内部积累效应（70%）
-            info.popularity *= 1.0 + 0.2 * Math.log(info.activeDuration + 1);
-        }
-        info.lastSurgeTime = CommonState.getTime();
-    }
-
-    // 论文式重新激活（图4）
-    private boolean shouldReactivate(DataGenerator.DataInfo info) {
-        double residenceTime = CommonState.getTime() - info.lastActiveTime;
-        double threshold = 10 * Math.pow(info.peakPopularity, -0.6);
-        return residenceTime > threshold &&
-                random.nextDouble() < 0.1 * Math.log(info.historicalPopularity + 1);
-    }
-
-    private void reactivateData(DataGenerator.DataInfo info, long currentCycle) {
-        info.popularity = 1 + Math.pow(random.nextDouble(), -1 / (POWER_LAW_EXPONENT - 1));
-        info.activeDuration = 0;
-        info.lastActiveTime = currentCycle;
-    }
-
-    // 论文启发的查询分配（第3章）
-    private void distributeQueries() {
-        List<DataGenerator.DataInfo> rankedItems = rankingEngine.getRankedList();
-
+    private void generateZipfQueries() {
+        // 使用别名方法高效抽样
         for (int i = 0; i < TOTAL_QUERIES_PER_CYCLE; i++) {
-            DataGenerator.DataInfo selected = selectByRank(rankedItems);
-            executeQuery(selected.dataId);
+            int selectedRank = sampleZipf();
+            BigInteger dataId = globalRanking.get(selectedRank-1);
+            executeQuery(dataId);
         }
     }
+    private int sampleZipf() {
+        double rand = random.nextDouble();
+        double cumulative = 0.0;
 
-    // 论文式排名加权选择（公式2）
-    private DataGenerator.DataInfo selectByRank(List<DataGenerator.DataInfo> items) {
-        double rankWeight = Math.pow(random.nextDouble(), -1 / POWER_LAW_EXPONENT);
-        int index = (int) (rankWeight % items.size());
-        return items.get(index);
+        for (int i = 0; i < zipfProbabilities.length; i++) {
+            cumulative += zipfProbabilities[i];
+            if (rand < cumulative) {
+                return i + 1;
+            }
+        }
+        return zipfProbabilities.length;
     }
 
     private void executeQuery(BigInteger dataId) {
@@ -154,9 +141,6 @@ public class QueryGenerator implements Control {
 
         Node start = getRandomUpNode();
         if (start == null) return;
-
-        // 论文中的查询反馈效应
-        info.popularity += 1 + 0.1 * Math.log(rankingEngine.getRank(dataId) + 1);
 
         VRouterProtocol p = (VRouterProtocol) start.getProtocol(pid);
         Transport transport = (Transport) start.getProtocol(FastConfig.getTransport(pid));
@@ -176,28 +160,4 @@ public class QueryGenerator implements Control {
         return null;
     }
 
-    // 论文启发的排名引擎（第3章）
-    class RankingEngine {
-        private Map<BigInteger, Integer> currentRanks = new HashMap<>();
-        private List<DataGenerator.DataInfo> rankedItems = new ArrayList<>();
-
-        public void updateRanks(List<DataGenerator.DataInfo> activeItems) {
-            // 论文式排名算法
-            activeItems.sort((a, b) -> Double.compare(b.popularity, a.popularity));
-
-            rankedItems = activeItems;
-            currentRanks.clear();
-            for (int i = 0; i < activeItems.size(); i++) {
-                currentRanks.put(activeItems.get(i).dataId, i + 1);
-            }
-        }
-
-        public int getRank(BigInteger dataId) {
-            return currentRanks.getOrDefault(dataId, Integer.MAX_VALUE);
-        }
-
-        public List<DataGenerator.DataInfo> getRankedList() {
-            return Collections.unmodifiableList(rankedItems);
-        }
-    }
 }

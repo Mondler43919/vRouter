@@ -1,62 +1,74 @@
 package vRouter;
 
-import org.apache.poi.ss.usermodel.*;
-import org.apache.poi.xssf.usermodel.XSSFWorkbook;
-
 import java.io.*;
 import java.math.BigInteger;
+import java.util.ArrayList;
+import java.util.List;
 
 public class ExcelLogger {
-    private static final String FILE_PATH = "D:\\data_access_log.xlsx";
 
-    // 记录数据访问日志
-    public static void logDataAccess(long cycle, long timestamp,BigInteger msg_to, BigInteger msg_from, BigInteger dataId,String hash) {
-        File file = new File(FILE_PATH);
-        Workbook workbook;
-        Sheet sheet;
+    public static class SimpleLogger {
+        private static final String FILE_PATH = "D:\\access_log.csv";
+        private static final int FLUSH_THRESHOLD = 1000;
 
-        try {
-            // 如果文件已存在，加载它，否则创建新文件
-            if (file.exists()) {
-                FileInputStream fis = new FileInputStream(file);
-                workbook = new XSSFWorkbook(fis); // 打开已存在的文件
-                fis.close();
-                sheet = workbook.getSheet("AccessLog");
-                if (sheet == null) {
-                    sheet = workbook.createSheet("AccessLog");
-                }
-            } else {
-                workbook = new XSSFWorkbook(); // 创建新工作簿
-                sheet = workbook.createSheet("AccessLog");
+        private static final List<String> buffer = new ArrayList<String>();
+        private static boolean headerWritten = false;
 
-                // 创建标题行
-                Row header = sheet.createRow(0);
-                header.createCell(0).setCellValue("cycle");
-                header.createCell(1).setCellValue("timestamp");
-                header.createCell(2).setCellValue("local_node");
-                header.createCell(3).setCellValue("msg_from");
-                header.createCell(4).setCellValue("data_id");
-                header.createCell(5).setCellValue("hash");
+        public static synchronized void logSimpleAccess(long cycle, String dataId, int accessCount,
+                                                        int nodeCount, double score, int recycled, int level) {
+            // Construct a row of data
+            String row = String.format("%d,%s,%d,%d,%.4f,%d,%d",
+                    cycle, dataId, accessCount, nodeCount, score, recycled,level);
+            buffer.add(row);
+
+            // When threshold is reached, batch write
+            if (buffer.size() >= FLUSH_THRESHOLD||cycle>=178) {
+                flushBuffer();
             }
-            // 找到最后一行索引并添加数据
-            int lastRowNum = sheet.getLastRowNum();
-            Row row = sheet.createRow(lastRowNum + 1);  // 在最后一行后面添加新行
+        }
 
-            // 写入数据
-            row.createCell(0).setCellValue(cycle);
-            row.createCell(1).setCellValue(timestamp);
-            row.createCell(2).setCellValue(msg_to.toString(16));
-            row.createCell(3).setCellValue(msg_from.toString(16));
-            row.createCell(4).setCellValue(dataId.toString(16));
-            row.createCell(5).setCellValue(hash);
+        public static synchronized void flushBuffer() {
+            if (buffer.isEmpty()) {
+                return;
+            }
 
-            // 写回文件
-            FileOutputStream fos = new FileOutputStream(file);
-            workbook.write(fos);
-            fos.close();
-            workbook.close();
-        } catch (IOException e) {
-            e.printStackTrace();
+            BufferedWriter bw = null;
+            try {
+                File file = new File(FILE_PATH);
+                boolean isNewFile = !file.exists();
+
+                FileWriter fw = new FileWriter(file, true);
+                bw = new BufferedWriter(fw);
+
+                // Write header if it's a new file
+                if (isNewFile || !headerWritten) {
+                    bw.write("cycle,data_id,access_count,node_count,score,recycled,level");
+                    bw.newLine();
+                    headerWritten = true;
+                }
+
+                for (String row : buffer) {
+                    bw.write(row);
+                    bw.newLine();
+                }
+
+                buffer.clear();
+            } catch (IOException e) {
+                e.printStackTrace();
+            } finally {
+                if (bw != null) {
+                    try {
+                        bw.close();
+                    } catch (IOException e) {
+                        e.printStackTrace();
+                    }
+                }
+            }
+        }
+
+        // Call this before simulation ends to ensure final writes
+        public static void closeLogger() {
+            flushBuffer();
         }
     }
 }

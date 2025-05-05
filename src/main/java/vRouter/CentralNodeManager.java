@@ -3,12 +3,11 @@ package vRouter;
 import peersim.config.Configuration;
 import peersim.core.CommonState;
 import peersim.core.Network;
+import peersim.core.Node;
 
 import java.math.BigInteger;
 import java.util.*;
-import java.util.stream.Collectors;
-import java.io.BufferedWriter;
-import java.io.FileWriter;
+
 
 public class CentralNodeManager {
     private final MyNode currentNode;
@@ -18,7 +17,8 @@ public class CentralNodeManager {
     private final Map<String, Double> nodeScores = new HashMap<>();
     private final Map<String, Integer> globalAccessCounts = new HashMap<>();
     private final Map<String, Set<String>> globalAccessNodes = new HashMap<>();
-    private final Map<String, NodeProof> nodeProofs = new HashMap<>();
+    private final Map<String, String> nodeProofs = new HashMap<>();
+    private final List<String> nodeRootHashes = new ArrayList<>();
     private final Map<String, BigInteger> nodeVrfOutputs = new HashMap<>();
     private final Map<String, BigInteger> nodeVrfInputs = new HashMap<>();
     private final Map<String, BigInteger> candidateMap = new HashMap<>();
@@ -49,11 +49,8 @@ public class CentralNodeManager {
         // 存入消息
         roundData.messages.put(senderId, message);
         roundData.received++;
-        VRouterObserver.totalBytesTransferred.addAndGet(message.getSize());
-        // System.out.println(round + "    from:"+senderId+"   to:"+currentNode.getId());
 
-        // 如果收到全网消息，触发该轮执行
-        if (roundData.received == Network.size() - 1) { // -1 因为中心节点不发
+        if (roundData.received == Network.size()-1) { // -1 因为中心节点不发
             executeRound(round, roundData);
         }
     }
@@ -70,7 +67,8 @@ public class CentralNodeManager {
         for (DataAccessMessage msg : roundData.messages.values()) {
             String nodeId = msg.from.toString();
             nodeScores.put(nodeId, msg.nodeScore);
-            nodeProofs.put(nodeId, new NodeProof(msg.merkleRoot, msg.recordHashes));
+            nodeProofs.put(nodeId, msg.merkleRoot);
+            nodeRootHashes.add(msg.merkleRoot);
             nodeVrfOutputs.put(nodeId, msg.vrfoutput.getRandomValue());
             nodeVrfInputs.put(nodeId, msg.input);
 
@@ -81,12 +79,6 @@ public class CentralNodeManager {
             msg.dataAccessNodes.forEach((key, valueSet) ->
                     globalAccessNodes.computeIfAbsent(key, k -> new HashSet<>()).addAll(valueSet));
         }
-        DataVisualizationService visualizer = DataVisualizationService.getInstance();
-        visualizer.updatePerRound(
-                round,
-                globalAccessCounts,
-                globalAccessNodes
-        );
 
         // 选举中心节点
         List<Map.Entry<String, Double>> sortedCandidates = new ArrayList<>(nodeScores.entrySet());
@@ -110,32 +102,46 @@ public class CentralNodeManager {
                 currentNode.getHistoryData(),
                 currentNode.getDataScore()
         );
-        // globalAccessNodes.forEach((key, values) -> {
-        //     System.out.println(key + "  " + values);
-        // });
         dataScores.forEach((key, values) -> {
             System.out.println(key + " -> " + Arrays.toString(values));
         });
-        // 打包并上传区块
-        List<String> nodeRoots = nodeProofs.values().stream()
-                .map(p -> p.merkleRoot)
-                .collect(Collectors.toList());
-        MerkleTree globalTree = new MerkleTree(nodeRoots);
 
-        BlockData blockData = new BlockData(
-                globalTree.getRootHash(),
+        // DataVisualizationService visualizer = DataVisualizationService.getInstance();
+        // visualizer.updatePerRound(
+        //         round,
+        //         globalAccessCounts,
+        //         globalAccessNodes,
+        //         dataScores
+        // );
+
+        //打包上链
+        MerkleTree globalTreeFromNodeRoots = new MerkleTree(nodeRootHashes);
+        // Map<String, List<String>> nodeProofPaths = new HashMap<>();
+        // for (String nodeId : nodeProofs.keySet()) {
+        //     String nodeRoot = nodeProofs.get(nodeId);
+        //     int leafIndex = nodeRootHashes.indexOf(nodeRoot); // 查找该节点在根列表中的索引
+        //     List<String> proofPath = globalTreeFromNodeRoots.getProofPath(leafIndex);
+        //     nodeProofPaths.put(nodeId, proofPath);
+        // }
+
+         BlockData blockData = new BlockData(
+                globalTreeFromNodeRoots.getRootHash(),
                 newCentralNodeId,
                 candidateMap,
                 dataScores,
-        nodeScores,
-                nodeProofs.entrySet().stream()
-                        .collect(Collectors.toMap(Map.Entry::getKey, e -> e.getValue().merkleRoot))
+                nodeScores
                 );
 
         Block block = new Block(currentNode.getBlockchain().getLastBlockHash(), blockData);
-        currentNode.getBlockchain().broadcastBlock(block);
-        VRouterObserver.lastBlockCreatedTime.set(CommonState.getTime());
 
+        // 记录首次接收时间（如果尚未记录）
+        VRouterObserver.blockCreationTimes.putIfAbsent(
+                block.getBlockHash(),
+                round*1000 // 记录当前模拟时间为区块产生时间
+        );
+
+        VRouterProtocol p = (VRouterProtocol) currentNode.getProtocol(0);
+        p.sendBlock2Neighbors(block);
 
 
         // 最后移除本轮缓存（自动回收）
