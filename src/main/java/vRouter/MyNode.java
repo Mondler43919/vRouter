@@ -23,8 +23,8 @@ public class MyNode extends GeneralNode{
     private CentralNodeManager centralNodeManager;
     private HashMap<String, int[][]> historyData;
     private Integer cycle;
-    private PrivateKey privateKey;
-    private PublicKey publicKey;
+    private byte[] privateKey;
+    private byte[] publicKey;
 
     public MyNode(String prefix) {
         super(prefix);  // 调用 GeneralNode 的构造方法
@@ -38,7 +38,7 @@ public class MyNode extends GeneralNode{
         alreadyUpdate=false;
         historyData = new HashMap<>();
         cycle= Configuration.getInt("CYCLE");
-        VRFKeyPair keyPair = new VRFKeyPair();
+        VRFElection.KeyPair keyPair = VRFElection.generateKeyPair();
         this.privateKey = keyPair.getPrivateKey();
         this.publicKey = keyPair.getPublicKey();
     }
@@ -50,10 +50,9 @@ public class MyNode extends GeneralNode{
         clone.blockchain = new Blockchain();  // 每个节点拥有独立的区块链
         clone.centralNodeManager = new CentralNodeManager(clone);  // 深拷贝 centralNodeManager
         clone.historyData=new HashMap<>();
-        VRFKeyPair keyPair = new VRFKeyPair();
+        VRFElection.KeyPair keyPair = VRFElection.generateKeyPair();
         clone.privateKey = keyPair.getPrivateKey();
         clone.publicKey = keyPair.getPublicKey();
-
         return clone;
     }
 
@@ -64,6 +63,7 @@ public class MyNode extends GeneralNode{
 
 
     public void receiveBlock(Block block) {
+        VRouterObserver.totalBytesTransferred.addAndGet(block.cachedSize);
         // 验证区块的有效性
         if (isBlockValid(block)) {
             // 如果区块有效，添加到本地区块链
@@ -111,25 +111,24 @@ public class MyNode extends GeneralNode{
                 // 转换为128位二进制字符串（补前导零）
                 String binaryStr = String.format("%128s", dataId.toString(2)).replace(' ', '0');
 
-                // 3. 提取前56位二进制前缀
+                // 提取前56位二进制前缀
                 String binaryPrefix = binaryStr.substring(0, PREFIX_BITS);
 
-                // 4. 转换为14字符十六进制
+                // 转换为14字符十六进制
                 String hexPrefix = binaryToHex(binaryPrefix, HEX_DIGITS);
                 //System.out.println(hexPrefix);
-                // 5. 匹配评分数据
+                // 匹配评分数据
                 if (blockDataScores.containsKey(hexPrefix)) {
                     double[] metrics = blockDataScores.get(hexPrefix);
                     if (metrics == null || metrics.length < 5) continue;
 
-                    // 6. 更新缓存
+                    // 更新缓存
                     int activeStatus = (int) metrics[4];
                     if (activeStatus == 0) {
                         cacheManager.evictByDataId(cachedKey);
-                        if(dataId==null||QueryGenerator.dataRegistry.get(dataId)==null){
-                            System.err.println("lalalalla");
-                        }
-
+                        // if(dataId==null||QueryGenerator.dataRegistry.get(dataId)==null){
+                        //     System.err.println("lalalalla");
+                        // }
                     } else {
                         cacheManager.updateCacheEntry(cachedKey, metrics[0]);
                     }
@@ -140,7 +139,7 @@ public class MyNode extends GeneralNode{
         }
     }
 
-    // 辅助方法：二进制字符串转十六进制（自动补零）
+    // 二进制字符串转十六进制
     private String binaryToHex(String binaryStr, int targetHexLength) {
         // 将二进制字符串转换为BigInteger
         BigInteger numericValue = new BigInteger(binaryStr, 2);
@@ -193,10 +192,10 @@ public class MyNode extends GeneralNode{
     public CentralNodeManager getCentralNodeManager() {
         return centralNodeManager;
     }
-    public VRFElection.VRFOutput generateVRFOutput(BigInteger input) {
-        return VRFElection.computeVRF(this.privateKey, input);
+    public VRFElection.VRFOutput generateVRFOutput(byte[] input) {
+        return VRFElection.generateVRF(this.privateKey, input);
     }
-    public PublicKey getPublicKey() {
+    public byte[] getPublicKey() {
         return publicKey;
     }
 }

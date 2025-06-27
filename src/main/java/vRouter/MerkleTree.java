@@ -1,71 +1,73 @@
 package vRouter;
 
 import java.util.ArrayList;
-import java.util.HashMap;
 import java.util.List;
-import java.util.Map;
 
 public class MerkleTree {
-    private final List<String> leaves;
-    private final String root;
-    private final List<List<String>> treeLevels; // 存储所有层级用于生成证明路径
-    private final Map<Integer, List<String>> proofPaths; // 存储每个叶子节点的证明路径
+    private final MerkleNode root; // 根节点
 
-    public MerkleTree(List<String> leaves) {
-        this.leaves = new ArrayList<>(leaves);
-        this.treeLevels = new ArrayList<>();
-        this.proofPaths = new HashMap<>();
-        this.root = buildTree(this.leaves);
-    }
+    // Merkle 树节点定义
+    private static class MerkleNode {
+        private final String hash;  // 当前节点的哈希值
+        private MerkleNode left;   // 左子节点
+        private MerkleNode right;  // 右子节点
 
-    // 构建树的同时生成每个叶子节点的证明路径
-    private String buildTree(List<String> leaves) {
-        if (leaves.isEmpty()) {
-            return "";
+        public MerkleNode(String hash) {
+            this.hash = hash;
         }
 
-        List<String> currentLevel = new ArrayList<>(leaves);
-        treeLevels.add(new ArrayList<>(currentLevel));
+        // 判断是否为叶子节点（无子节点）
+        public boolean isLeaf() {
+            return left == null && right == null;
+        }
 
-        // 在每一层构建时，也记录下证明路径
+        // Getter 方法
+        public String getHash() { return hash; }
+        public MerkleNode getLeft() { return left; }
+        public MerkleNode getRight() { return right; }
+    }
+
+    // 构造函数：从叶子节点哈希列表构建 Merkle 树
+    public MerkleTree(List<String> leaves) {
+        this.root = buildTree(leaves);
+    }
+
+    // 构建 Merkle 树的核心逻辑
+    private MerkleNode buildTree(List<String> leaves) {
+        if (leaves.isEmpty()) {
+            return null; // 空树
+        }
+
+        // 第一层：所有叶子节点
+        List<MerkleNode> currentLevel = new ArrayList<>();
+        for (String leaf : leaves) {
+            currentLevel.add(new MerkleNode(leaf));
+        }
+
+        // 逐层向上构建父节点，直到根节点
         while (currentLevel.size() > 1) {
-            List<String> nextLevel = new ArrayList<>();
+            List<MerkleNode> nextLevel = new ArrayList<>();
             for (int i = 0; i < currentLevel.size(); i += 2) {
-                String left = currentLevel.get(i);
-                String right = (i + 1 < currentLevel.size()) ? currentLevel.get(i + 1) : left;
-                String parentHash = HashUtils.SHA256(left + right);
-                nextLevel.add(parentHash);
-
-                // 记录证明路径
-                for (int j = 0; j < 2; j++) {
-                    int index = i + j;
-                    if (index < currentLevel.size()) {
-                        proofPaths.putIfAbsent(index, new ArrayList<>());
-                        proofPaths.get(index).add(j == 0 ? right : left); // 添加兄弟节点到路径中
-                    }
-                }
+                MerkleNode left = currentLevel.get(i);
+                MerkleNode right = (i + 1 < currentLevel.size()) ? currentLevel.get(i + 1) : left; // 奇数节点时复制左节点
+                String parentHash = HashUtils.SHA256(left.getHash() + right.getHash()); // 计算父节点哈希
+                MerkleNode parent = new MerkleNode(parentHash);
+                parent.left = left;
+                parent.right = right;
+                nextLevel.add(parent);
             }
-            treeLevels.add(new ArrayList<>(nextLevel));
             currentLevel = nextLevel;
         }
-        return currentLevel.get(0);
+        return currentLevel.get(0); // 返回根节点
     }
 
+    // 获取根节点哈希
     public String getRootHash() {
+        return root != null ? root.getHash() : "";
+    }
+
+    // 获取根节点（允许外部遍历树结构）
+    public MerkleNode getRoot() {
         return root;
-    }
-
-    // 获取某个叶子节点的证明路径
-    public List<String> getProofPath(int leafIndex) {
-        return proofPaths.getOrDefault(leafIndex, new ArrayList<>());
-    }
-
-    // 验证某个叶子节点的哈希是否正确
-    public static boolean verify(String leaf, List<String> path, String root) {
-        String currentHash = leaf;
-        for (String sibling : path) {
-            currentHash = HashUtils.SHA256(currentHash + sibling);
-        }
-        return currentHash.equals(root);
     }
 }

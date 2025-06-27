@@ -8,19 +8,17 @@ import peersim.util.IncrementalStats;
 import java.math.BigInteger;
 import java.util.ArrayList;
 import java.util.HashMap;
-import java.util.Map;
-import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
 
 public class VRouterObserver implements Control {
     public double cycleLength=(double) Configuration.getInt("CYCLE");
+    public int networkSize=Configuration.getInt("SIZE");
     // 原有查找统计指标
     public static IncrementalStats successLookupForwardHop = new IncrementalStats();
     public static IncrementalStats successLookupBackwardHop = new IncrementalStats();
     public static IncrementalStats totalSuccessHops = new IncrementalStats();
-    public static IncrementalStats failedBackwardLookupHop = new IncrementalStats();
     public static IncrementalStats indexHop = new IncrementalStats();
     public static IncrementalStats bloomFilterCount = new IncrementalStats();
     public static IncrementalStats latencyStats = new IncrementalStats();
@@ -36,11 +34,11 @@ public class VRouterObserver implements Control {
 
     // 网络性能指标
     public static final AtomicLong totalBytesTransferred = new AtomicLong(0);
-    private static final ArrayList<Double> bandwidthHistory = new ArrayList<>();
+    private static final IncrementalStats bandwidthHistory = new IncrementalStats();
+    public static final IncrementalStats blockSize = new IncrementalStats();
     private static final String PAR_PROT = "protocol";
     private int pid;
     private String prefix;
-    private long lastStatTime = 0;
     private int totalcycle=Configuration.getInt("CYCLES");
 
     public VRouterObserver(String prefix) {
@@ -54,40 +52,33 @@ public class VRouterObserver implements Control {
         int currentCycle = (int)(now / cycleLength);
 
         // 常规统计指标
-        double tps = calculateTPS(now);
-        double throughput = calculateThroughput(now);
+        double throughput = calculateThroughput();
 
         if(currentCycle>120 && currentCycle<totalcycle-20){
             bandwidthHistory.add(throughput);
         }
         if(currentCycle==totalcycle-1)
         {
-            double averageBW= bandwidthHistory.stream().mapToDouble(Double::doubleValue).average().orElse(0.0);
-            double averagePropagationTime = blockPropagationTime.getAverage()/Configuration.getInt("CYCLE");
-            String output1=String.format("平均BW=%.3f  |  平均产块时间=%.4s：",averageBW,averagePropagationTime);
+            double averageBW= bandwidthHistory.getAverage();
+            double averagePropagationTime = blockPropagationTime.getAverage();
+            double averageBlockSize=blockSize.getAverage()/1024.0;
+            String output1=String.format("平均BW=%.3f  |  平均产块时间=%.4s：  |   平均区块大小：%.4s",averageBW,averagePropagationTime,averageBlockSize);
             System.err.println(output1);
         }
 
         // 常规输出
-        String output = String.format("TPS=%.1f | BW=%.2fMB/s", tps, throughput);
+        String output = String.format(" BW=%.2fKB/s", throughput);
         System.err.println(output);
 
         // 重置周期统计量
         resetPeriodicStats();
-        lastStatTime = now;
 
         return false;
     }
 
-    private double calculateTPS(long currentTime) {
-        return currentBlockTxCount.get() /
-                ((currentTime - lastStatTime)/cycleLength + 0.001); // 避免除零
-    }
-
-    private double calculateThroughput(long currentTime) {
+    private double calculateThroughput( ) {
         long bytes = totalBytesTransferred.get();
-        double seconds = (currentTime - lastStatTime)/cycleLength;
-        return (bytes/(1024.0*1024.0)) / (seconds + 0.001);
+        return (bytes/(1024.0))/networkSize;
     }
     private void resetPeriodicStats() {
         currentBlockTxCount.set(0);

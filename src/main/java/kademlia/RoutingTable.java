@@ -67,12 +67,12 @@ public class RoutingTable implements Cloneable {
 		}
 		else{
 			// else get k closest node from all k-buckets
-//			prefix_len = 0;
-//			while (prefix_len < KademliaCommonConfig.ALPHA) {
-//				neighbour_candidates.addAll(k_buckets.get(prefix_len).neighbours.keySet());
-//				// remove source id
-//				prefix_len++;
-//			}
+			prefix_len = 0;
+			while (prefix_len < KademliaCommonConfig.ALPHA) {
+				neighbour_candidates.addAll(k_buckets.get(prefix_len).neighbours.keySet());
+				// remove source id
+				prefix_len++;
+			}
 			while(neighbour_candidates.size()<KademliaCommonConfig.ALPHA && prefix_len > 0){
 				prefix_len --;
 				neighbour_candidates.addAll(k_buckets.get(prefix_len).neighbours.keySet());

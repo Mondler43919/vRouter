@@ -9,9 +9,7 @@ import peersim.core.Network;
 import peersim.core.Node;
 
 import java.math.BigInteger;
-import java.util.Comparator;
-import java.util.HashMap;
-import java.util.HashSet;
+import java.util.*;
 
 /**
  * 初始化类，执行网络中所有初始节点的k-buckets填充操作。<br>
@@ -42,7 +40,7 @@ public class StateBuilder implements peersim.core.Control {
         System.out.println("开始网络初始化");
         // 创建一个均匀随机生成器，用于生成随机的节点ID
         UniformRandomGenerator urg = new UniformRandomGenerator(KademliaCommonConfig.BITS, CommonState.r);
-        int randomNodeId = (int) (Math.random() * Network.size());
+        int randomNodeId = CommonState.r.nextInt(Network.size());
 
         // 为每个节点生成一个随机的节点ID
         BigInteger centralNodeId = null;
@@ -58,14 +56,13 @@ public class StateBuilder implements peersim.core.Control {
                 centralNodeId = tmp;
             }
         }
-		//创建创世区块
         BlockData genesisData = new BlockData(
-                "0",                       // 初始Merkle根（占位符）
-                centralNodeId.toString(),   // 初始中心节点ID
-                new HashMap<>(),            // 候选集（空）
-                new HashMap<>(),            // 数据评分（空）
-                new HashMap<>(),            // 节点评分（空）
-                new HashMap<>()             // 节点证明（空）
+                "0",
+                new ArrayList<>(),      // 空 MerkleTree
+                centralNodeId.toString(),               // 初始中心节点 ID
+                new HashMap<>(),                        // 候选节点映射（空）
+                new HashMap<>(),                        // 数据评分（空）
+                new HashMap<>()                         // 节点评分（空）
         );
 		Block genesisBlock = new Block("0", genesisData);
 		for (int i = 0; i < Network.size(); i++) {
@@ -90,38 +87,40 @@ public class StateBuilder implements peersim.core.Control {
         // 获取网络中的节点数量
         int sz = Network.size();
 
-        // 遍历每个节点，为其路由表添加50个随机的邻居节点
+        // 遍历每个节点，为其路由表添加更多随机邻居
         for (int i = 0; i < sz; i++) {
             Node iNode = Network.get(i);
             VRouterProtocol iKad = (VRouterProtocol) (iNode.getProtocol(vrouterID));
 
-            // 为当前节点添加50个随机邻居
-            for (int k = 0; k < 50; k++) {
-                // 随机选择一个节点并将其添加到当前节点的路由表
-                VRouterProtocol jKad = (VRouterProtocol) (Network.get(CommonState.r.nextInt(sz)).getProtocol(vrouterID));
-                iKad.routingTable.addNeighbour(jKad.nodeId);
-            }
-        }
-
-        // 为每个节点添加额外的50个近距离节点作为邻居
-        for (int i = 0; i < sz; i++) {
-            Node iNode = Network.get(i);
-            VRouterProtocol iKad = (VRouterProtocol) (iNode.getProtocol(vrouterID));
-
-            int start = i;
-            // 如果节点接近网络的末尾，调整起始位置
-            if (i > sz - 50) {
-                start = sz - 25;
-            }
-            // 为节点添加50个相对较近的邻居节点
-            for (int k = 0; k < 50; k++) {
-                start = start++;
-                if (start > 0 && start < sz) {
-                    VRouterProtocol jKad = (VRouterProtocol) (Network.get(start++).getProtocol(vrouterID));
+            // 为当前节点添加100个随机邻居
+            HashSet<BigInteger> added = new HashSet<>();
+            while (added.size() < 100) {
+                int randIndex = CommonState.r.nextInt(sz);
+                if (randIndex == i) continue; // 不加自己
+                VRouterProtocol jKad = (VRouterProtocol) (Network.get(randIndex).getProtocol(vrouterID));
+                if (added.add(jKad.nodeId)) {
                     iKad.routingTable.addNeighbour(jKad.nodeId);
                 }
             }
         }
+
+        // 为每个节点添加80个“相对接近”的邻居节点
+        for (int i = 0; i < sz; i++) {
+            Node iNode = Network.get(i);
+            VRouterProtocol iKad = (VRouterProtocol) (iNode.getProtocol(vrouterID));
+
+            int start = Math.max(0, i - 40);  // 确保不越界，向前偏移40
+            int count = 0;
+            while (count < 100 && start < sz) {
+                if (start != i) {
+                    VRouterProtocol jKad = (VRouterProtocol) (Network.get(start).getProtocol(vrouterID));
+                    iKad.routingTable.addNeighbour(jKad.nodeId);
+                    count++;
+                }
+                start++;
+            }
+        }
+
         System.out.println("网络已初始化");
         return false;  // 返回false表示该控制器不再继续执行
     }

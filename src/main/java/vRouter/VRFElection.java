@@ -1,91 +1,87 @@
 package vRouter;
 
 import java.math.BigInteger;
-import java.security.*;
+import java.util.Map;
 import java.io.Serializable;
-import java.util.*;
-
-import peersim.core.Network;
 
 public class VRFElection {
+    public static final int PRIVATE_KEY_SIZE = 32;
+    public static final int PUBLIC_KEY_SIZE = 32;
+    public static final int PROOF_SIZE = 96;
 
-    // **VRF 计算结果类**
-    public static class VRFOutput implements Serializable {
-        private static final long serialVersionUID = 1L;  // 添加 serialVersionUID
+    static {
+        System.load("D:\\vRouter\\lib\\secp256r1_hash.dll");
+    }
 
-        private final BigInteger randomValue; // 伪随机数
-        private final String proof; // 证明字符串
+    public static class KeyPair {
+        private final byte[] privateKey;
+        private final byte[] publicKey;
 
-        public VRFOutput(BigInteger randomValue, String proof) {
+        public KeyPair(byte[] privateKey, byte[] publicKey) {
+            this.privateKey = privateKey;
+            this.publicKey = publicKey;
+        }
+
+        public byte[] getPrivateKey() {
+            return privateKey.clone();
+        }
+
+        public byte[] getPublicKey() {
+            return publicKey.clone();
+        }
+    }
+
+
+    public static class VRFOutput implements Serializable{
+        private static final long serialVersionUID = 1L;
+        private final byte[] randomValue;
+        private final byte[] proof;
+
+        public VRFOutput(byte[] randomValue, byte[] proof) {
             this.randomValue = randomValue;
             this.proof = proof;
         }
 
-        public BigInteger getRandomValue() {
+        public byte[] getRandomValue() {
             return randomValue;
         }
 
-        public String getProof() {
+        public byte[] getProof() {
             return proof;
         }
     }
 
-    // 仅使用公钥进行 VRF 计算
-    public static VRFOutput computeVRF(PublicKey publicKey, BigInteger input) {
-        try {
-            MessageDigest digest = MessageDigest.getInstance("SHA-256");
-            byte[] keyBytes = publicKey.getEncoded(); // 获取公钥的字节数组
-            byte[] inputData = (Base64.getEncoder().encodeToString(keyBytes) + "-" + input.toString()).getBytes();
-            byte[] hashBytes = digest.digest(inputData);
+    public static native KeyPair generateKeyPair();
 
-            BigInteger randomValue = new BigInteger(1, hashBytes);
-            String proof = Base64.getEncoder().encodeToString(hashBytes);
+    public static native VRFOutput generateVRF(byte[] privateKey, byte[] input);
 
-            return new VRFOutput(randomValue, proof);
-        } catch (NoSuchAlgorithmException e) {
-            throw new RuntimeException("SHA-256 计算失败", e);
+    public static native boolean verifyVRFProof(byte[] publicKey, byte[] input, byte[] proof);
+
+    public static String electNextCentralNode(Map<BigInteger, byte[]> candidateVrfValues) {
+        if (candidateVrfValues == null || candidateVrfValues.isEmpty()) {
+            return null;
         }
-    }
-
-    public static VRFOutput computeVRF(PrivateKey privateKey, BigInteger input) {
-        try {
-            MessageDigest digest = MessageDigest.getInstance("SHA-256");
-            byte[] keyBytes = privateKey.getEncoded(); // 获取公钥的字节数组
-            byte[] inputData = (Base64.getEncoder().encodeToString(keyBytes) + "-" + input.toString()).getBytes();
-            byte[] hashBytes = digest.digest(inputData);
-
-            BigInteger randomValue = new BigInteger(1, hashBytes);
-            String proof = Base64.getEncoder().encodeToString(hashBytes);
-
-            return new VRFOutput(randomValue, proof);
-        } catch (NoSuchAlgorithmException e) {
-            throw new RuntimeException("SHA-256 计算失败", e);
-        }
-    }
-
-    // 验证VRF结果
-    public static boolean verifyVRF(PublicKey vk, BigInteger input, BigInteger randomValue, String proof) {
-        VRFOutput expectedOutput = computeVRF(vk, input);
-        return expectedOutput.getRandomValue().equals(randomValue) &&
-                expectedOutput.getProof().equals(proof);
-    }
-
-    public static String electNextCentralNode(Map<BigInteger, BigInteger> candidateVrfValues) {
 
         BigInteger selectedNode = null;
-        BigInteger minDifference = null;
+        BigInteger minDistance = null;
 
-        for (Map.Entry<BigInteger, BigInteger> entry : candidateVrfValues.entrySet()) {
+        for (Map.Entry<BigInteger, byte[]> entry : candidateVrfValues.entrySet()) {
             BigInteger nodeId = entry.getKey();
-            BigInteger vrfValue = entry.getValue();
-            BigInteger difference = nodeId.subtract(vrfValue).abs();
+            byte[] vrfOutput = entry.getValue();
 
-            if (minDifference == null || difference.compareTo(minDifference) < 0) {
-                minDifference = difference;
+            // 将VRF输出字节数组转换为BigInteger
+            BigInteger vrfValue = new BigInteger(1, vrfOutput);
+
+            // 计算节点ID与VRF值的距离（绝对值差）
+            BigInteger distance = nodeId.subtract(vrfValue).abs();
+
+            // 选择距离最小的节点
+            if (minDistance == null || distance.compareTo(minDistance) < 0) {
+                minDistance = distance;
                 selectedNode = nodeId;
             }
         }
-        return selectedNode.toString();
-    }
 
+        return selectedNode != null ? selectedNode.toString() : null;
+    }
 }

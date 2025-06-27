@@ -9,17 +9,21 @@ public class BlockData implements Serializable {
 
     private final String globalMerkleRoot;
     private final String centralNodeId;
-    private final Map<String, BigInteger> candidateMap;
+    private final List<String> nodeRootHashes;
+    private final Map<String, byte[]> candidateMap;
     private final Map<String, double[]> dataScores;
     private final Map<String, Double> nodeScores;
 
     public BlockData(String globalMerkleRoot,
+                     List<String> nodeRootHashes,
                      String centralNodeId,
-                     Map<String, BigInteger> candidateMap,
+                     Map<String, byte[]> candidateMap,
                      Map<String, double[]> dataScores,
                      Map<String, Double> nodeScores) {
 
+
         this.globalMerkleRoot = globalMerkleRoot;
+        this.nodeRootHashes=nodeRootHashes;
         this.centralNodeId = centralNodeId;
         this.candidateMap = new HashMap<>(candidateMap);
 
@@ -32,12 +36,15 @@ public class BlockData implements Serializable {
     public String getGlobalMerkleRoot() {
         return globalMerkleRoot;
     }
+    public List<String> nodeRootHashes() {
+        return nodeRootHashes;
+    }
 
     public String getCentralNodeId() {
         return centralNodeId;
     }
 
-    public Map<String, BigInteger> getCandidateSet() {
+    public Map<String, byte[]> getCandidateSet() {
         return candidateMap;
     }
 
@@ -49,10 +56,5 @@ public class BlockData implements Serializable {
 
     public Map<String, Double> getNodeScores() {
         return new HashMap<>(nodeScores);
-    }
-
-
-    public String getNodeMerkleRoot() {
-        return globalMerkleRoot;
     }
 }

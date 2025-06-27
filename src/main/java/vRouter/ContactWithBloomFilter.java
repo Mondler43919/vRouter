@@ -27,7 +27,6 @@ public class ContactWithBloomFilter {
                 bf.add(dataID);
                 return;
             }
-//            System.out.println("=======overflow");
         }
         BloomFilter<BigInteger> bf = new BloomFilterMemory<>(new FilterBuilder(VRouterCommonConfig.EXPECTED_ELEMENTS, VRouterCommonConfig.FALSE_POSITIVE_PROB).hashFunction
                 (HashProvider.HashMethod.MD5).complete());

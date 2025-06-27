@@ -67,19 +67,27 @@ public class DataGenerator implements Control {
             if (start == null) return false;
 
             VRouterProtocol p = (VRouterProtocol) start.getProtocol(pid);
-            BigInteger nodeID = p.nodeId;
 
-            String nodeBinary = String.format("%" + totalBits + "s", nodeID.toString(2)).replace(' ', '0');
-            String prefix56 = nodeBinary.substring(0, 56);
-            BigInteger prefixBigInt = new BigInteger(prefix56, 2);
+            // 前56位二进制字符串
+            String prefix56 = new BigInteger(56, CommonState.r).toString(2);
+            prefix56 = String.format("%56s", prefix56).replace(' ', '0');
 
+            // 固定的 "00"
             String fixed00 = "00";
+
+            // 随机生成后缀部分
             int remainingBits = totalBits - 58;
             String randomSuffix = new BigInteger(remainingBits, CommonState.r).toString(2);
             randomSuffix = String.format("%" + remainingBits + "s", randomSuffix).replace(' ', '0');
 
+            // 拼接完整的二进制字符串
             String fullBinary = prefix56 + fixed00 + randomSuffix;
+
+            // 转换为 BigInteger
             BigInteger dataID = new BigInteger(fullBinary, 2);
+
+            // 将前缀56位转为十六进制字符串作为 prefix 标识
+            BigInteger prefixBigInt = new BigInteger(prefix56, 2);
 
             DataInfo info = new DataInfo();
             info.dataId = dataID;
@@ -90,9 +98,9 @@ public class DataGenerator implements Control {
             QueryGenerator.dataPrefixes.add(prefixBigInt.toString(16));
             p.storeData(dataID, pid);
         }
+
         return false;
     }
-
     private Node getRandomUpNode() {
         int attempts = 0;
         while (attempts < Network.size()) {

@@ -12,19 +12,12 @@ public class Block implements Serializable {
     private long timestamp;
     public transient int cachedSize = -1;
 
-    public Block(String previousHash, BlockData data, long timestamp) {
-        this.previousHash = previousHash;
-        this.data = data;
-        this.timestamp = timestamp;
-        this.blockHash = calculateHash();
-        this.cachedSize=calculateBlockSize(this);
-    }
-
     public Block(String previousHash, BlockData data) {
         this.previousHash = previousHash;
         this.data = data;
         this.timestamp = new Date().getTime();
         this.blockHash = calculateHash();
+        this.cachedSize=calculateBlockSize(this);
     }
 
     public String calculateHash() {

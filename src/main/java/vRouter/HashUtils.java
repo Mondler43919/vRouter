@@ -9,7 +9,7 @@ public class HashUtils {
     // 模拟 SHA-256 哈希计算
     public static String SHA256(String input) {
         try {
-            java.security.MessageDigest digest = java.security.MessageDigest.getInstance("SHA-256");
+            MessageDigest digest = MessageDigest.getInstance("SHA-256");
             byte[] hashBytes = digest.digest(input.getBytes("UTF-8"));
             StringBuilder hexString = new StringBuilder();
             for (byte b : hashBytes) {
@@ -20,6 +20,15 @@ public class HashUtils {
             return hexString.toString();
         } catch (Exception e) {
             throw new RuntimeException("SHA-256 计算失败", e);
+        }
+    }
+
+    public static byte[] sha256(byte[] input) {
+        try {
+            MessageDigest digest = MessageDigest.getInstance("SHA-256");
+            return digest.digest(input);
+        } catch (NoSuchAlgorithmException e) {
+            throw new RuntimeException("SHA-256不可用", e);
         }
     }
 

@@ -22,6 +22,7 @@ import peersim.transport.Transport;
 import redis.clients.jedis.Jedis;
 
 import java.math.BigInteger;
+import java.nio.ByteBuffer;
 import java.time.Instant;
 import java.util.*;
 import java.util.concurrent.atomic.AtomicLong;
@@ -307,7 +308,7 @@ public class VRouterProtocol implements Cloneable, EDProtocol,CDProtocol {
 		// 先查 Redis
 		String cachedData = cacheEvictionManager.get(key.toString());
 		if (cachedData != null) {
-			QueryGenerator.queriedData.put(msg.dataID, 1);  // 标记数据已查询
+			// QueryGenerator.queriedData.put(msg.dataID, 1);  // 标记数据已查询
 			VRouterObserver.successLookupForwardHop.add(msg.forwardHops);  // 记录向前跳数
 			VRouterObserver.successLookupBackwardHop.add(msg.backwardHops);  // 记录向后跳数
 			VRouterObserver.totalSuccessHops.add(msg.forwardHops + msg.backwardHops);  // 记录总跳数
@@ -321,7 +322,7 @@ public class VRouterProtocol implements Cloneable, EDProtocol,CDProtocol {
 		}
 		// 如果本地存储了数据
 		if(dataStorage.containsKey(msg.dataID)) {
-			QueryGenerator.queriedData.put(msg.dataID, 1);  // 标记数据已查询
+			// QueryGenerator.queriedData.put(msg.dataID, 1);  // 标记数据已查询
 			VRouterObserver.successLookupForwardHop.add(msg.forwardHops);  // 记录向前跳数
 			VRouterObserver.successLookupBackwardHop.add(msg.backwardHops);  // 记录向后跳数
 			VRouterObserver.totalSuccessHops.add(msg.forwardHops + msg.backwardHops);  // 记录总跳数
@@ -403,43 +404,39 @@ public class VRouterProtocol implements Cloneable, EDProtocol,CDProtocol {
 	}
 	public void handleDataAccessMessage(MyNode myNode, DataAccessMessage msg, int protocolID) {
 
-		CentralNodeManager manager = myNode.getCentralNodeManager();
-		manager.processDataAccessMessage(msg);
 		VRouterObserver.totalBytesTransferred.addAndGet(msg.cachedSize);
 
-		// // 判断当前节点是否为中心节点
-		// if (this.nodeId.equals(msg.to)) {
-		// 	// 如果是中心节点，交给CentralNodeManager处理
-		// 	CentralNodeManager manager = myNode.getCentralNodeManager();
-		// 	manager.processDataAccessMessage(msg);
-		// 	return;
-		// }
+		// 判断当前节点是否为中心节点
+		if (this.nodeId.equals(msg.to)) {
+			// 如果是中心节点，交给CentralNodeManager处理
+			CentralNodeManager manager = myNode.getCentralNodeManager();
+			manager.processDataAccessMessage(msg);
+			return;
+		}
 
-
-
-		// // 设置当前协议ID
-		// this.vRouterID = protocolID;
-		//
-		// if(handledDataAccess.containsKey(msg.merkleRoot)) return;
-
-		// // 判断当前节点是否为中心节点
-		// if (this.nodeId.equals(msg.to)) {
-		// 	// 如果是中心节点，交给CentralNodeManager处理
-		// 	CentralNodeManager manager = myNode.getCentralNodeManager();
-		// 	manager.processDataAccessMessage(msg);
-		// 	return;
-		// }
-		// // 查找更接近目标（中心节点）的节点
-		// BigInteger[] closerNodes = getCloserNodes(msg.to);
-		//
-		// // 转发给所有更接近的节点
-		// for (BigInteger closerNode : closerNodes) {
-		// 	Node targetNode = this.nodeIdtoNode(closerNode);
-		// 	if (targetNode != null) {
-		// 		sendMessage(nodeIdtoNode(nodeId), targetNode, protocolID, msg);
-		// 	}
-		// }
-		// handledDataAccess.put(msg.merkleRoot, 1);
+		// 设置当前协议ID
+	// 	this.vRouterID = protocolID;
+	//
+	// 	if(handledDataAccess.containsKey(msg.merkleRoot)) return;
+	//
+	// 	// 判断当前节点是否为中心节点
+	// 	if (this.nodeId.equals(msg.to)) {
+	// 		// 如果是中心节点，交给CentralNodeManager处理
+	// 		CentralNodeManager manager = myNode.getCentralNodeManager();
+	// 		manager.processDataAccessMessage(msg);
+	// 		return;
+	// 	}
+	// 	// 查找更接近目标（中心节点）的节点
+	// 	BigInteger[] closerNodes = getCloserNodes(msg.to);
+	//
+	// 	// 转发给所有更接近的节点
+	// 	for (BigInteger closerNode : closerNodes) {
+	// 		Node targetNode = this.nodeIdtoNode(closerNode);
+	// 		if (targetNode != null) {
+	// 			sendMessage(nodeIdtoNode(nodeId), targetNode, protocolID, msg);
+	// 		}
+	// 	}
+	// 	handledDataAccess.put(msg.merkleRoot, 1);
 	}
 	public void handleBlockMessage(MyNode myNode, Block msg, int protocolID) {
 		// 基础处理
@@ -522,8 +519,9 @@ public class VRouterProtocol implements Cloneable, EDProtocol,CDProtocol {
 			MyNode myNode = (MyNode) node;
 			this.vRouterID = protocolID;
 			BigInteger centralNodeID = new BigInteger(myNode.getBlockchain().getCentralNodeId());
-			BigInteger input=BigInteger.valueOf(Instant.now().toEpochMilli());
-			VRFElection.VRFOutput vrfoutput=((MyNode)node).generateVRFOutput(input);
+			long timestamp = Instant.now().toEpochMilli();
+			byte[] inputBytes = ByteBuffer.allocate(Long.BYTES).putLong(timestamp).array();
+			VRFElection.VRFOutput vrfoutput = ((MyNode) node).generateVRFOutput(inputBytes);
 
 			DataAccessMessage message =new DataAccessMessage(
 					this.nodeId,
@@ -534,22 +532,12 @@ public class VRouterProtocol implements Cloneable, EDProtocol,CDProtocol {
 					new HashMap<>(dataAccessCount),
 					new HashMap<>(dataAccessNode),
 					new ArrayList<>(accessRecords),
-					input,
+					inputBytes,
 					vrfoutput,
 					currentCycle
 			);
 			sendMessage(nodeIdtoNode(nodeId), nodeIdtoNode(centralNodeID), protocolID, message);
-			// // 查找更接近目标（中心节点）的节点
-			// BigInteger[] closerNodes = getCloserNodes(centralNodeID);
-
-			// // 转发给所有更接近的节点
-			// for (BigInteger closerNode : closerNodes) {
-			// 	Node targetNode = this.nodeIdtoNode(closerNode);
-			// 	if (targetNode != null) {
-			// 		sendMessage(nodeIdtoNode(nodeId), targetNode, protocolID, message);
-			// 	}
-			// }
-			// initDataMetrics();
+			initDataMetrics();
 		}
 	}
 }

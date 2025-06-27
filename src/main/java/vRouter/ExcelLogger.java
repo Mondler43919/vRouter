@@ -16,13 +16,11 @@ public class ExcelLogger {
 
         public static synchronized void logSimpleAccess(long cycle, String dataId, int accessCount,
                                                         int nodeCount, double score, int recycled, int level) {
-            // Construct a row of data
             String row = String.format("%d,%s,%d,%d,%.4f,%d,%d",
                     cycle, dataId, accessCount, nodeCount, score, recycled,level);
             buffer.add(row);
 
-            // When threshold is reached, batch write
-            if (buffer.size() >= FLUSH_THRESHOLD||cycle>=178) {
+            if (buffer.size() >= FLUSH_THRESHOLD||cycle>=128) {
                 flushBuffer();
             }
         }
@@ -40,7 +38,6 @@ public class ExcelLogger {
                 FileWriter fw = new FileWriter(file, true);
                 bw = new BufferedWriter(fw);
 
-                // Write header if it's a new file
                 if (isNewFile || !headerWritten) {
                     bw.write("cycle,data_id,access_count,node_count,score,recycled,level");
                     bw.newLine();
@@ -66,7 +63,6 @@ public class ExcelLogger {
             }
         }
 
-        // Call this before simulation ends to ensure final writes
         public static void closeLogger() {
             flushBuffer();
         }

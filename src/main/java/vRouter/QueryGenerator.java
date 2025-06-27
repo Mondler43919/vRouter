@@ -14,22 +14,24 @@ import java.math.BigInteger;
 import java.util.*;
 
 public class QueryGenerator implements Control {
+    // 分布类型枚举
+    private static String distributionType = "ZIPF";
     private static final int TOTAL_QUERIES_PER_CYCLE = 1000;
-    private static final double MARKOV_STABILITY = 0.93;         // 保持原排名的概率
+    private static final double MARKOV_STABILITY = 0.94;         // 保持原排名的概率
     private static final double NEAR_RANK_TRANSITION = 0.05;     // 轻微跳动的概率
-    private static final double ZIPF_ALPHA = 0.6;   //zipf越大数据越极端
+    private static final double ZIPF_ALPHA = 0.8;   // zipf越大数据越极端
+    private static final double NORMAL_STD_DEV = 0.2; // 正态分布的标准差
+
     public static boolean executeFlag = false;
     public static HashMap<BigInteger, DataGenerator.DataInfo> dataRegistry = new HashMap<>();
     public static Set<String> dataPrefixes = new HashSet<>();
-    public static HashMap<BigInteger, Integer> queriedData = new HashMap<>();
 
     private final int pid;
     private final UniformRandomGenerator urg;
     private final Random random = CommonState.r;
     private static List<BigInteger> globalRanking = new ArrayList<>();
     private static Map<BigInteger, Integer> rankMap = new HashMap<>();
-    private static double[] zipfProbabilities = null;
-
+    private static double[] selectionProbabilities = null;
 
     public QueryGenerator(String prefix) {
         pid = Configuration.getPid(prefix + ".protocol");
@@ -39,44 +41,61 @@ public class QueryGenerator implements Control {
     public boolean execute() {
         if (!executeFlag) return false;
 
-        // 1. 马尔可夫排名转移
+        // 马尔可夫排名转移
         applyMarkovRankTransitions();
 
-        // 2. 生成查询
-        generateZipfQueries();
+        // 生成查询
+        generateQueries();
 
         return false;
     }
-    // 初始化全局排名（在所有数据生成后调用一次）
+
+    // 初始化全局排名
     public static void initializeGlobalRanking() {
         globalRanking.clear();
         globalRanking.addAll(dataRegistry.keySet());
 
-        // 初始Zipf排名
-        Collections.shuffle(globalRanking); // 先随机打乱
+        // 初始随机排名
+        Collections.shuffle(globalRanking);
         rankMap.clear();
         for (int i = 0; i < globalRanking.size(); i++) {
             rankMap.put(globalRanking.get(i), i+1);
         }
+
+        // 根据选择的分布类型初始化概率
         int size = globalRanking.size();
-        zipfProbabilities = new double[size];
-        double totalWeight = 0.0;
+        selectionProbabilities = new double[size];
 
-        for (int i = 0; i < size; i++) {
-            zipfProbabilities[i] = 1.0 / Math.pow(i + 1, ZIPF_ALPHA);
-            totalWeight += zipfProbabilities[i];
-        }
-
-        for (int i = 0; i < size; i++) {
-            zipfProbabilities[i] /= totalWeight;
+        if (distributionType == "ZIPF") {
+            // Zipf分布
+            double totalWeight = 0.0;
+            for (int i = 0; i < size; i++) {
+                selectionProbabilities[i] = 1.0 / Math.pow(i + 1, ZIPF_ALPHA);
+                totalWeight += selectionProbabilities[i];
+            }
+            for (int i = 0; i < size; i++) {
+                selectionProbabilities[i] /= totalWeight;
+            }
+        } else {
+            // 正态分布
+            double mean = (size - 1) / 2.0; // 均值在中间
+            double sum = 0;
+            for (int i = 0; i < size; i++) {
+                double x = (i - mean) / (size * NORMAL_STD_DEV);
+                selectionProbabilities[i] = Math.exp(-0.5 * x * x);
+                sum += selectionProbabilities[i];
+            }
+            // 归一化
+            for (int i = 0; i < size; i++) {
+                selectionProbabilities[i] /= sum;
+            }
         }
     }
+
     private void applyMarkovRankTransitions() {
-        // 创建副本以避免修改原始数组
         List<BigInteger> newRanking = new ArrayList<>(globalRanking);
 
         for (int i = 0; i < newRanking.size(); i++) {
-            BigInteger dataId = newRanking.get(i);
             int currentRank = i + 1;  // 数组索引从0开始，排名从1开始
 
             // 计算新的期望排名
@@ -114,25 +133,18 @@ public class QueryGenerator implements Control {
         }
     }
 
-    private void generateZipfQueries() {
-        // 使用别名方法高效抽样
-        for (int i = 0; i < TOTAL_QUERIES_PER_CYCLE; i++) {
-            int selectedRank = sampleZipf();
-            BigInteger dataId = globalRanking.get(selectedRank-1);
-            executeQuery(dataId);
-        }
-    }
-    private int sampleZipf() {
-        double rand = random.nextDouble();
-        double cumulative = 0.0;
+    private void generateQueries() {
+        int size = globalRanking.size();
 
-        for (int i = 0; i < zipfProbabilities.length; i++) {
-            cumulative += zipfProbabilities[i];
-            if (rand < cumulative) {
-                return i + 1;
+        for (int i = 0; i < size; i++) {
+            BigInteger dataId = globalRanking.get(i);
+            double probability = selectionProbabilities[i];
+
+            int queryCount = (int) Math.round(probability * TOTAL_QUERIES_PER_CYCLE);
+            for (int j = 0; j < queryCount; j++) {
+                executeQuery(dataId);
             }
         }
-        return zipfProbabilities.length;
     }
 
     private void executeQuery(BigInteger dataId) {
@@ -159,5 +171,4 @@ public class QueryGenerator implements Control {
         }
         return null;
     }
-
 }

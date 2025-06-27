@@ -17,7 +17,7 @@ public class DataAccessMessage implements Serializable {
     public final Map<String, Set<String>> dataAccessNodes;
 
     public final String merkleRoot;
-    public final BigInteger input;
+    public final byte[] input;
     public final VRFElection.VRFOutput vrfoutput;
     public final long cycle;
     public transient int cachedSize = -1;
@@ -30,7 +30,7 @@ public class DataAccessMessage implements Serializable {
                              Map<String, Integer> dataAccessCount,
                              Map<String, Set<String>> dataAccessNodes,
                              List<AccessRecord> accessRecords,
-                             BigInteger input,
+                             byte[] input,
                              VRFElection.VRFOutput vrfoutput,
                              long currentCycle) {
         this.from = senderId;
